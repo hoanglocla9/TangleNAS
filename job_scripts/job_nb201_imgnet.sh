@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -p ml_gpu-rtx2080 #rtx2080
+#SBATCH -p partition_name
 #SBATCH --gres=gpu:1
 #SBATCH -t 1-00:00:00 # time (D-HH:MM)
 #SBATCH -c 2 # number of cores
