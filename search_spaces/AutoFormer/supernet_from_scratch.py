@@ -437,13 +437,13 @@ def get_args_parser():
     parser.add_argument(
         '--model_path',
         default=
-        "/work/dlclarge2/sukthank-naslib_one_shot/OneShotNASwithWE/AutoFormerWE/output_cifar10_drnas_df_final_with_prior/checkpoint_204.pth",
+        "checkpoint.pth",
         type=str,
         help='pretrained_model_path')
     parser.add_argument(
         '--df_path',
         default=
-        "/work/dlclarge2/sukthank-naslib_one_shot/OneShotNASwithWE/AutoFormerWE/output_cifar10_drnas_df_final_with_prior/df_archs.pkl",
+        "df_archs.pkl",
         type=str,
         help='architecture path')
 

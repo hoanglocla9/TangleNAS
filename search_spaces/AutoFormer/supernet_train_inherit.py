@@ -437,13 +437,13 @@ def get_args_parser():
     parser.add_argument(
         '--model_path',
         default=
-        "/work/dlclarge1/sukthank-transformer_search/GraViT-E/experiments/OneShotNASwithWE/output_drnas_imnet_search/checkpoint_184.pth",
+        "checkpoint.pth",
         type=str,
         help='pretrained_model_path')
     parser.add_argument(
         '--df_path',
         default=
-        "/work/dlclarge1/sukthank-transformer_search/GraViT-E/experiments/OneShotNASwithWE/output_drnas_imnet_search/df_archs.pkl",
+        "df_archs.pkl",
         type=str,
         help='architecture path')
 

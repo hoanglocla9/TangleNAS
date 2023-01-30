@@ -348,7 +348,7 @@ def get_args_parser():
     parser.add_argument(
         '--data-path',
         default=
-        '/work/dlclarge2/sukthank-naslib_one_shot/Cream/AutoFormer/imagenet/',
+        'imagenet/',
         type=str,
         help='dataset path')
     parser.add_argument('--data-set',
