@@ -7,7 +7,7 @@ Official repo for the paper TangleNAS: Weight Entanglement meets One-Shot Optimi
 2. [Working Tree and Dataset Preparation](#dataset)
 3. [Experiments](#experiments)
     - [Search](#search)
-    - [Training and Evaluation](#launch)
+    - [Training and Evaluation](#train)
 
 
 ## 1. Installation & Dependencies<a name="Dependencies"></a>
@@ -113,7 +113,14 @@ source job_scripts/job_swinir_search.sh
 ```bash
 source job_scripts/job_autoformer_search.sh
 ```
-
+### Train 
+To train the architectures (by inheriting from the supernet) run. Note that you may need to change the path to the saved supernet in the respective script
+```bash
+source job_scripts/job_nb201_inherit.sh
+```
+```bash
+source job_scripts/job_nats_inherit.sh
+```
 
 
 
