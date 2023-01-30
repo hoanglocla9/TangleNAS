@@ -5,7 +5,7 @@ Official repo for the paper TangleNAS: Weight Entanglement meets One-Shot Optimi
 ## Overview
 1. [Installation & Dependencies](#Dependencies)
 2. [Working Tree and Dataset Preparation](#dataset)
-3. [Experiments](#Training)
+3. [Experiments](#experiments)
     - [Search](#search)
     - [Training and Evaluation](#launch)
 
@@ -69,7 +69,9 @@ Download the ```imagenet-1k``` from [here](https://www.image-net.org/download.ph
 
 Download the DIV2K datasets from [here](https://data.vision.ee.ethz.ch/cvl/DIV2K/) and the corresponding Set5 and Set14 testsets from [here](https://github.com/XPixelGroup/BasicSR/blob/master/docs/DatasetPreparation.md#Common-Image-SR-Datasets).
 
-## 3. Experiments
+## 3. Experiments <a name="experiments"></a>
+
+### Search  <a name="search"></a>
 ### Search on the NB201 search space
 ```source job_scripts/launch_nb201_cifar.sh```
 
