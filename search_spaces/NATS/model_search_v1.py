@@ -122,7 +122,7 @@ class NATSSearchSpaceV1(SearchNetworkBase):
                  reg_scale=1e-3,
                  affine=False,
                  track_running_stats=False,
-                 path_to_benchmark = '/work/dlclarge1/sukthank-transformer_search/GraViT-E/main/OneShotNASwithWE/data/NATS-sss-v1_0-50262-simple',
+                 path_to_benchmark = '.',
                  initialize_api = True):
         super(NATSSearchSpaceV1, self).__init__()
         channels = [64, 64, 64, 64, 64]

@@ -10,7 +10,5 @@ dataset=$1
 optimizer=$2
 search_space=$3
 seed=$4
-python -m search.experiment_search  --dataset ${dataset}  --optimizer ${optimizer}  --searchspace ${search_space} --seed ${seed} --path_to_benchmark /work/dlclarge1/sukthank-transformer_search/reproduce_oneshot/DrNAS/201-space/NAS-Bench-201-v1_0-e61699.pth 
-#/work/dlclarge1/sukthank-transformer_search/GraViT-E/main/OneShotNASwithWE/data/NATS-sss-v1_0-50262-simple #/work/dlclarge1/sukthank-transformer_search/reproduce_oneshot/DrNAS/201-space/NAS-Bench-201-v1_0-e61699.pth
-#python -m search.experiment_search --dataset cifar10  --optimizer spos  --searchspace nb201 --seed 9004 --path_to_benchmark /work/dlclarge1/sukthank-transformer_search/reproduce_oneshot/DrNAS/201-space/NAS-Bench-201-v1_0-e61699.pth #--path_to_benchmark /work/dlclarge1/sukthank-transformer_search/reproduce_oneshot/DrNAS/201-space/NAS-Bench-201-v1_0-e61699.pth #/work/dlclarge1/sukthank-transformer_search/GraViT-E/main/OneShotNASwithWE/data/NATS-sss-v1_0-50262-simple #/work/dlclarge1/sukthank-transformer_search/GraViT-E/experiments/OneShotNASwithWE/NATS-sss-v1_0-50262-simple #/work/dlclarge1/sukthank-transformer_search/reproduce_oneshot/DrNAS/201-space/NAS-Bench-201-v1_0-e61699.pth #--data_path data/ImageNet16/
+python -m search.experiment_search  --dataset ${dataset}  --optimizer ${optimizer}  --searchspace ${search_space} --seed ${seed} --path_to_benchmark NAS-Bench-201-v1_0-e61699.pth 
 

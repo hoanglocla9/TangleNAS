@@ -246,7 +246,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--model_path',
         default=
-        "/work/dlclarge1/sukthank-transformer_search/GraViT-E/main/temp/OneShotNASwithWE/final_experiments_nats/checkpoint/we_nb201_drnas_cifar10_9004-3rsjptia/seed-9004-best.pth",
+        ".",
         type=str)
     parser.add_argument('--load_saved_model', action='store_true', default=False, help='Load the saved models before training them')
     args = parser.parse_args()

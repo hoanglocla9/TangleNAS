@@ -249,7 +249,7 @@ class Experiment:
         torch.cuda.manual_seed(rand_seed)
 
     def run(self):
-        wandb.init(project="Final Experiments", entity="nas-team-freiburg", name=self.name)
+        wandb.init(project="experiment_name", entity="entity_name", name=self.name)
         self.logger = Logger(log_dir=self.log_dir,
                              seed=self.seed,
                              exp_name=f'{self.name}-{wandb.run.id}')
@@ -332,7 +332,7 @@ if __name__ == '__main__':
     experiment = Experiment(searchspace,
                             one_shot_opt=optimizer,
                             dataset=dataset,
-                            datapath='/work/dlclarge1/sukthank-transformer_search/GraViT-E/main/OneShotNASwithWE/data/ImageNet16/',
+                            datapath='.',
                             seed=args.seed,
                             log_dir=args.logdir,
                             load_saved_model=args.load_saved_model,

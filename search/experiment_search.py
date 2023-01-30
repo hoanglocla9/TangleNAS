@@ -254,7 +254,7 @@ class Experiment:
         torch.cuda.manual_seed(rand_seed)
 
     def run(self):
-        wandb.init(project="Final Experiments", entity="nas-team-freiburg", name=self.name)
+        wandb.init(project="project_name", entity="entity_name", name=self.name)
         self.logger = Logger(log_dir=self.log_dir,
                              seed=self.seed,
                              exp_name=f'{self.name}-{wandb.run.id}')
@@ -305,7 +305,7 @@ class Experiment:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        'One shot optimization with weight entanglement', add_help=False)
+        'TangleNAS', add_help=False)
     parser.add_argument('--searchspace',
                         default='nb201',
                         help='search space in (darts, nb201, nats)',

@@ -237,6 +237,6 @@ class NATSModel(NetworkBase):
 
 #test
 #model = NATSModel(genotype=CellStructure.str2structure('|nor_conv_3x3~0|+|nor_conv_3x3~0|nor_conv_3x3~1|+|skip_connect~0|nor_conv_3x3~1|nor_conv_3x3~2|'), num_classes=10)#.cuda()
-#model.load_state_dict(torch.load("/work/dlclarge1/sukthank-transformer_search/GraViT-E/model_nats.path"))
+#model.load_state_dict(torch.load("."))
 #img = torch.randn([64,3,32,32])#.cuda()
 #print(model(img)[-1].shape)

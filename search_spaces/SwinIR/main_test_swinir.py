@@ -48,13 +48,13 @@ def main():
         '--folder_lq',
         type=str,
         default=
-        "/work/dlclarge1/sukthank-transformer_search/GraViT-E/testsets_swinir/Set14/LRbicx2", #/work/dlclarge1/sukthank-transformer_search/GraViT-E/testsets_swinir/Set14/LRbicx2", #"/work/dlclarge2/sukthank-image_super_resolution/KAIR/testsets/Set5/LR_bicubic/X2",#
+        "testsets_swinir/Set14/LRbicx2", 
         help='input low-quality test image folder')
     parser.add_argument(
         '--folder_gt',
         type=str,
         default=
-        "/work/dlclarge1/sukthank-transformer_search/GraViT-E/testsets_swinir/Set14/GTmod12", #/work/dlclarge1/sukthank-transformer_search/GraViT-E/testsets_swinir/Set14/GTmod12",
+        "testsets_swinir/Set14/GTmod12",
         help='input ground-truth test image folder')
     parser.add_argument(
         '--tile',
@@ -296,7 +296,7 @@ def define_model(args):
     #pickle.load = functools.partial(pickle.load, encoding="latin1")
     #pickle.Unpickler = functools.partial(pickle.Unpickler, encoding="latin1")
     pretrained_model = torch.load(
-        "/work/dlclarge1/sukthank-transformer_search/GraViT-E/main/temp/OneShotNASwithWE/superresolution/swinir_sr_lightweight_x2_darts_inherit_more/models/72200_E.pth"
+        "model_path"
     )
     #print(pretrained_model.keys())
     model.load_state_dict(pretrained_model[param_key_g] if param_key_g

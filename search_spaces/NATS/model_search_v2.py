@@ -344,4 +344,4 @@ class NATSSearchSpaceV2(SearchNetworkBase):
 #model = NATSSearchSpaceV2("gdas", genotype=CellStructure.str2structure('|nor_conv_3x3~0|+|nor_conv_3x3~0|nor_conv_3x3~1|+|skip_connect~0|nor_conv_3x3~1|nor_conv_3x3~2|'), num_classes=10, criterion=nn.CrossEntropyLoss())#.cuda()
 #img = torch.randn([64,3,32,32])#.cuda()
 #print(model(img)[-1].shape)
-#torch.save(model.state_dict(), "/work/dlclarge1/sukthank-transformer_search/GraViT-E/model_nats.path")
+#torch.save(model.state_dict(), ".")

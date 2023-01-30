@@ -17,8 +17,8 @@
     "train": {
       "name": "train_dataset"           // just name
       , "dataset_type": "sr"         // "dncnn" | "dnpatch" | "fdncnn" | "ffdnet" | "sr" | "srmd" | "dpsr" | "plain" | "plainpatch" | "jpeg"
-      , "dataroot_H":  "/work/dlclarge2/sukthank-image_super_resolution/DIV2K/DIV2K_train_HR/"// path of H training dataset. DIV2K (800 training images)
-      , "dataroot_L": "/work/dlclarge2/sukthank-image_super_resolution/DIV2K/DIV2K_train_LR_bicubic/X2/"              // path of L training dataset
+      , "dataroot_H":  "DIV2K/DIV2K_train_HR/"// path of H training dataset. DIV2K (800 training images)
+      , "dataroot_L": "DIV2K/DIV2K_train_LR_bicubic/X2/"              // path of L training dataset
 
       , "H_size": 128                  // 128/192/256/512.
 
@@ -29,8 +29,8 @@
     , "test": {
       "name": "test_dataset"            // just name
       , "dataset_type": "sr"         // "dncnn" | "dnpatch" | "fdncnn" | "ffdnet" | "sr" | "srmd" | "dpsr" | "plain" | "plainpatch" | "jpeg"
-      , "dataroot_H": "/work/dlclarge2/sukthank-image_super_resolution/KAIR/testsets/Set5/HR"  // path of H testing dataset
-      , "dataroot_L": "/work/dlclarge2/sukthank-image_super_resolution/KAIR/testsets/Set5/LR_bicubic/X2/"              // path of L testing dataset
+      , "dataroot_H": "testsets/Set5/HR"  // path of H testing dataset
+      , "dataroot_L": "testsets/Set5/LR_bicubic/X2/"              // path of L testing dataset
 
     }
   }
@@ -41,7 +41,7 @@
    ,"tau_min": 0.1
     ,"tau_max": 10
     ,"net_type": "swinir_inherit"
-    ,"load_path": "/work/dlclarge1/sukthank-transformer_search/GraViT-E/experiments/OneShotNASwithWE/superresolution/swinir_sr_lightweight_x2_gdas_inherit_restart/models/101300_E.pth" 
+    ,"load_path": "model_path" 
     , "upscale": 2                      // 2 | 3  | 4
     , "in_chans": 3 
     , "img_size": 64
