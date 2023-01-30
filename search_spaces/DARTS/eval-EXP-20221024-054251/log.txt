@@ -1,0 +1,4 @@
+2022-10-24 05:42:52,052 gpu device = 0
+2022-10-24 05:42:52,052 args = Namespace(data='../data', batch_size=96, learning_rate=0.025, momentum=0.9, weight_decay=0.0003, report_freq=50, gpu=0, epochs=600, init_channels=36, layers=20, model_path='saved_models', auxiliary=True, auxiliary_weight=0.4, cutout=True, cutout_length=16, drop_path_prob=0.2, save='eval-EXP-20221024-054251', seed=0, arch='darts', grad_clip=5)
+2022-10-24 05:43:01,391 param size = 3.040030MB
+2022-10-24 05:43:04,454 epoch 0 lr 2.499966e-02
