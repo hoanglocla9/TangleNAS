@@ -73,28 +73,46 @@ Download the DIV2K datasets from [here](https://data.vision.ee.ethz.ch/cvl/DIV2K
 
 ### Search  <a name="search"></a>
 ### Search on the NB201 search space
-```source job_scripts/launch_nb201_cifar.sh```
+```bash
+source job_scripts/launch_nb201_cifar.sh
+```
 
-```source job_scripts/launch_nb201_imgnet.sh```
+```bash 
+source job_scripts/launch_nb201_imgnet.sh
+```
 
 ### Search on the NATS search space
-```source job_scripts/launch_nats_v2_cifar.sh```
+```bash
+source job_scripts/launch_nats_v2_cifar.sh
+```
 
-```source job_scripts/launch_nats_v2_imgnet.sh```
+```bash
+source job_scripts/launch_nats_v2_imgnet.sh
+```
 
 ### Search on the DARTS search space
 
-```source job_scripts/launch_darts_cifar10.sh```
+```bash
+source job_scripts/launch_darts_cifar10.sh
+```
 
-```source job_scripts/launch_darts_drnas.sh```
+```bash
+source job_scripts/launch_darts_drnas.sh
+```
 
 ### Search on the AutoFormer search space
-```source job_scripts/job_swinir_search.sh```
+```bash
+source job_scripts/job_swinir_search.sh
+```
 ### Search on the SwinIR search space
-```source job_scripts/job_swinir_search.sh```
+```bash
+source job_scripts/job_swinir_search.sh
+```
 
-### Search on the SwinIR search space
-```source job_scripts/job_autoformer_search.sh```
+### Search on the Autoformer search space
+```bash
+source job_scripts/job_autoformer_search.sh
+```
 
 
 
