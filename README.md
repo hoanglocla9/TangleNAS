@@ -122,6 +122,17 @@ source job_scripts/job_nb201_inherit.sh
 source job_scripts/job_nats_inherit.sh
 ```
 
+To evaluate our derived architectures from the darts search space we simply plug in the architectures derived into the training protocol in the [darts](https://github.com/quark0/darts/) repo. The derived architectures can be found in ```train/genotypes.py```
+
+To inherit and finetune the best architecture from the swinir search space
+```bash
+source job_scripts/job_swinir_inherit.sh
+```
+To inherit and finetune the best architecture from the autoformer search space.
+```bash
+source job_scripts/job_autoformer_train.sh
+```
+
 
 
 
