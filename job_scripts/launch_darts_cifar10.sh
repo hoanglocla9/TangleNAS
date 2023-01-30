@@ -1,5 +1,5 @@
 #!/bin/bash
-seeds=(9003)
+seeds=(9001 9002 9003 9004)
 optimizers=("darts_v2")
 datasets=("cifar10")
 for dataset in "${datasets[@]}"

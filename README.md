@@ -4,19 +4,10 @@ Official repo for the paper TangleNAS: Weight Entanglement meets One-Shot Optimi
 ![title](figures/overview.png)
 ## Overview
 1. [Installation & Dependencies](#Dependencies)
-2. [Prepration](#Prepration)
-    - [Directories](#Directories)
-    - [Data](#Data)
-3. [Training](#Training)
-    - [Searching](#search)
+2. [Working Tree and Dataset Preparation](#dataset)
+3. [Experiments](#Training)
+    - [Search](#search)
     - [Training and Evaluation](#launch)
-4. [Results](#Results)
-    - [ToySearch Space](#toy)
-    - [NASBench201](#nb201)
-    - [DARTS](#darts)
-    - [NATS](#nats)
-    - [AutoFormer](#autoformer)
-    - [SwinIR](#autoformer)
 
 
 ## 1. Installation & Dependencies<a name="Dependencies"></a>
@@ -29,7 +20,7 @@ conda activate tanglenas
 pip install -r requirements.txt
 ```
 
-## 2. Preparation <a name="Preparation"></a>
+## 2. Working Tree and Dataset Preparation <a name="dataset"></a>
 ### Code working tree
 ```bash
 ├── configs
@@ -74,9 +65,40 @@ The ```toy_search_space``` folder contains the code for the search spaces and op
 ### Dataset preparation
 
 ```CIFAR10``` and ```CIFAR100``` datasets will be automatically downloaded
-Download the ```imagenet-1k``` from [here](https://www.image-net.org/download.php) and update the path to the dataset in the training script
+Download the ```imagenet-1k``` from [here](https://www.image-net.org/download.php) and update the path to the dataset in the training script. The dataset Imagenet16-120 
 
-Download the DIV2K datasets from [here](https://data.vision.ee.ethz.ch/cvl/DIV2K/) and the corresponding testsets from [here](https://github.com/XPixelGroup/BasicSR/blob/master/docs/DatasetPreparation.md#Common-Image-SR-Datasets).
+Download the DIV2K datasets from [here](https://data.vision.ee.ethz.ch/cvl/DIV2K/) and the corresponding Set5 and Set14 testsets from [here](https://github.com/XPixelGroup/BasicSR/blob/master/docs/DatasetPreparation.md#Common-Image-SR-Datasets).
+
+## 3. Experiments
+### Search on the NB201 search space
+```source job_scripts/launch_nb201_cifar.sh```
+
+```source job_scripts/launch_nb201_imgnet.sh```
+
+### Search on the NATS search space
+```source job_scripts/launch_nats_v2_cifar.sh```
+
+```source job_scripts/launch_nats_v2_imgnet.sh```
+
+### Search on the DARTS search space
+
+```source job_scripts/launch_darts_cifar10.sh```
+
+```source job_scripts/launch_darts_drnas.sh```
+
+### Search on the AutoFormer search space
+```source job_scripts/job_swinir_search.sh```
+### Search on the SwinIR search space
+```source job_scripts/job_swinir_search.sh```
+
+### Search on the SwinIR search space
+```source job_scripts/job_autoformer_search.sh```
+
+
+
+
+
+
 
 
 
