@@ -1,4 +1,4 @@
-Official repo for the paper titled _Investigating Weight-Entanglement for One-Shot Neural Architecture Search_
+Official repo for the paper titled _Weight-Entanglement Meets Gradient-Based Neural Architecture Search_
 
 ## Overview
 1. [Installation & Dependencies](#Dependencies)
