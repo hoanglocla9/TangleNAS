@@ -1,5 +1,7 @@
 Official repo for the paper titled _Weight-Entanglement Meets Gradient-Based Neural Architecture Search_
+
 ![Overview](figures/overview.png)
+
 ## Overview
 1. [Installation & Dependencies](#Dependencies)
 2. [Working Tree and Dataset Preparation](#dataset)
