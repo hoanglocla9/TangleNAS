@@ -1,5 +1,5 @@
 # TangleNAS
-Official repo for the paper TangleNAS: Weight Entanglement meets One-Shot Optimization.
+Official code for the paper "Weight-Entanglement Meets Gradient-Based Neural Architecture Search"
 
 ![title](figures/overview.png)
 ## Overview
@@ -32,7 +32,6 @@ pip install -r requirements.txt
 │   ├── mixop
 │   └── sampler
 │   ├── optim_factory.py
-├── plotting
 ├── search_spaces
 │   ├── AutoFormer
 │   ├── DARTS
@@ -52,15 +51,17 @@ The ```optimizers``` folder contains the configuratble optimizers used namely da
 
 The ```job_scripts``` folder contains the scripts used for search, finetuning and training the architectures obtained
 
-The ```plotting``` folder contains the scripts used for analysis
-
 The ```search_spaces``` folder contains the definition of the search spaces used
+
+The ```toy_search_spaces``` folder contains the code for the search spaces of the toy search spaces.
+
+The ```toy_benchmarks``` folder contains the pickle files for the toy benchmarks we release.
 
 The ```search``` folder contains the code used to perform NAS
 
 The ```train``` folder contains the code used to train or finetune the architectures obtained
 
-The ```toy_search_space``` folder contains the code for the search spaces and optimizers of the toy search space.
+
 
 ### Dataset preparation
 
