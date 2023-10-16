@@ -1,12 +1,13 @@
 from optimizers.mixop.gdas import GDASMixOp, GDASMixOpV2
 from optimizers.mixop.darts import DARTSMixOp, DARTSMixOpV2
 from optimizers.mixop.drnas import DRNASMixOp, DRNASMixOpV2
-from optimizers.mixop.spos import SPOSMixOp
-from optimizers.mixop.discrete import DiscretizeMixOp
+from optimizers.mixop.spos import SPOSMixOp, SPOSMixOpV2
+from optimizers.mixop.discrete import DiscretizeMixOpV2
 from optimizers.sampler.darts import DARTSSampler
 from optimizers.sampler.drnas import DRNASSampler
 from optimizers.sampler.gdas import GDASSampler
 from optimizers.sampler.spos import SPOSSampler
+from optimizers.sampler.discrete import DiscreteSampler
 
 
 def get_mixop(opt_name, use_we_v2=False):
@@ -20,7 +21,7 @@ def get_mixop(opt_name, use_we_v2=False):
         elif opt_name == "spos":
             return SPOSMixOp()
         elif opt_name == "discrete":
-            return DiscretizeMixOp()
+            return DiscretizeMixOpV2()
     else:
         if opt_name in ["darts_v1", "darts_v2"]:
             return DARTSMixOpV2()
@@ -28,8 +29,10 @@ def get_mixop(opt_name, use_we_v2=False):
             return GDASMixOpV2()
         elif opt_name == "drnas":
             return DRNASMixOpV2()
-        else:
-            raise NotImplementedError(f'WE v2 is not implemented for {opt_name}')
+        elif opt_name == "spos":
+            return SPOSMixOpV2()
+        elif opt_name == "discrete":
+            return DiscretizeMixOpV2()
 
 def get_sampler(opt_name):
     if opt_name in ["darts_v1", "darts_v2"]:
@@ -40,3 +43,6 @@ def get_sampler(opt_name):
         return DRNASSampler()
     elif opt_name == "spos":
         return SPOSSampler()
+    elif opt_name == "discrete":
+        return DiscreteSampler()
+    

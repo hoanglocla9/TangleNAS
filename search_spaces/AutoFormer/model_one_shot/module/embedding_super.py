@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from model_one_shot.utils import to_2tuple
+from search_spaces.AutoFormer.model_one_shot.utils import to_2tuple
 import numpy as np
-from model_one_shot.utils import trunc_normal_
+from search_spaces.AutoFormer.model_one_shot.utils import trunc_normal_
 
 
 def calc_dropout(dropout, sample_embed_dim, super_embed_dim):
@@ -78,6 +78,139 @@ class PatchembedSuper(torch.nn.Module):  #TODO: Better name?
         return x
 
 
+class PatchembedMixture(torch.nn.Module):
+
+    def __init__(self, layer: torch.nn.Linear, emb_choice_list: list) -> None:
+        super(PatchembedMixture, self).__init__()
+        self.emb_choice_list = emb_choice_list
+        self.layer = layer
+        self.max_emb = max(self.emb_choice_list)
+
+    def _compute_weight_and_bias(self, weights, idx, conv_weight, conv_bias, op_weight, op_bias, use_argmax=False):
+        alpha = weights[idx]
+        emb_size = self.emb_choice_list[idx]
+        start = 0 
+        end = start + emb_size
+        #print(op_weight.shape)
+        weight_curr = alpha * op_weight[:end,:,:,:]
+        if use_argmax == False:
+            conv_weight +=F.pad(weight_curr, (0,0,0,0,0,0,0,self.max_emb-emb_size), "constant", 0)
+        else:
+            conv_weight = weight_curr
+        
+        if op_bias is not None:
+            bias = alpha * op_bias[:emb_size]
+            if use_argmax == False:
+                conv_bias += F.pad(bias,(0,self.max_emb-emb_size),"constant",0)
+            else:
+                conv_bias = bias
+
+        return conv_weight, conv_bias
+
+    def compute_weight_and_bias_mixture(self, weights, op_weight, op_bias, use_argmax=False):
+        conv_weight = 0
+        conv_bias = 0
+        if use_argmax == True:
+            argmax = np.array([w.item() for w in weights]).argmax()
+            conv_weight, conv_bias = self._compute_weight_and_bias(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                op_weight=op_weight,
+                op_bias=op_bias,
+                use_argmax=use_argmax
+            )
+        else:
+            for i, _ in enumerate(weights):
+                conv_weight, conv_bias = self._compute_weight_and_bias(
+                    weights=weights,
+                    idx=i,
+                    conv_weight=conv_weight,
+                    conv_bias=conv_bias,
+                    op_weight=op_weight,
+                    op_bias=op_bias,
+                    use_argmax=use_argmax
+                )
+        if op_bias==None:
+            conv_bias = op_bias
+        return conv_weight, conv_bias
+
+    def _compute_embeds(self, weights, idx, conv_weight, conv_bias, op_weight, op_bias, use_argmax=False):
+        alpha = weights[idx]
+        emb_size = self.emb_choice_list[idx]
+        start = 0 
+        end = start + emb_size
+        #print(op_weight.shape)
+        weight_curr = alpha*op_weight[:,:,:end]
+        if use_argmax == False:
+            conv_weight += F.pad(weight_curr, (0,self.max_emb-emb_size,0,0,0,0), "constant", 0)
+        else:
+            conv_weight = weight_curr
+        
+        if op_bias is not None:
+            bias = alpha * op_bias[:,:,:emb_size]
+            if use_argmax == False:
+                conv_bias += F.pad(bias,(0,self.max_emb-emb_size,0,0,0,0),"constant",0)
+            else:
+                conv_bias = bias
+
+        return conv_weight, conv_bias
+
+    def compute_embeds_mixture(self, weights, op_weight, op_bias, use_argmax=False):
+        conv_weight = 0
+        conv_bias = 0
+        if use_argmax == True:
+            argmax = np.array([w.item() for w in weights]).argmax()
+            conv_weight, conv_bias = self._compute_embeds(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                op_weight=op_weight,
+                op_bias=op_bias,
+                use_argmax=use_argmax
+            )
+        else:
+            for i, _ in enumerate(weights):
+                conv_weight, conv_bias = self._compute_embeds(
+                    weights=weights,
+                    idx=i,
+                    conv_weight=conv_weight,
+                    conv_bias=conv_bias,
+                    op_weight=op_weight,
+                    op_bias=op_bias
+                )
+        if op_bias==None:
+            conv_bias = op_bias
+        return conv_weight, conv_bias
+
+    def forward(self, x: torch.Tensor, weights: torch.Tensor, use_argmax=False) -> torch.Tensor:
+        weight_proj, bias_proj = self.compute_weight_and_bias_mixture(weights, self.layer.proj.weight, self.layer.proj.bias, use_argmax=use_argmax)
+        cls_token, pos_embed = self.compute_embeds_mixture(weights, self.layer.cls_token, self.layer.pos_embed, use_argmax=use_argmax)
+        sample_dropout = calc_dropout(self.layer.super_dropout,
+                                      self.layer.super_embed_dim,
+                                      self.layer.super_embed_dim)
+        if self.layer.scale:
+            sampled_scale = 1
+        B, C, H, W = x.shape
+        assert H == self.layer.img_size[0] and W == self.layer.img_size[1], \
+            f"Input image size ({H}*{W}) doesn't match model ({self.layer.img_size[0]}*{self.layer.img_size[1]})."
+        x = F.conv2d(x,
+                     weight_proj,
+                     bias_proj,
+                     stride=self.layer.patch_size,
+                     padding=self.layer.proj.padding,
+                     dilation=self.layer.proj.dilation).flatten(2).transpose(
+                         1, 2)
+        if self.layer.scale:
+            return x * sampled_scale
+        x = torch.cat((cls_token.expand(B, -1, -1), x), dim=1)
+        if self.layer.abs_pos:
+            x = x + pos_embed
+        x = F.dropout(x, p=sample_dropout, training=self.training)
+        return x
+
 class PatchembedSub(torch.nn.Module):
 
     def __init__(self, layer: torch.nn.Linear, emb_choice: int) -> None:
@@ -117,3 +250,19 @@ class PatchembedSub(torch.nn.Module):
             x = F.pad(x, (0, self.layer.super_embed_dim - x.shape[-1]),
                       "constant", 0)
         return x
+# test patch embed mixture
+'''if __name__ == "__main__":
+    emb_layer = PatchembedSuper(embed_dim=10)
+    emb_layer.proj.weight.data = torch.ones_like(emb_layer.proj.weight.data)
+    emb_layer.proj.bias.data = torch.ones_like(emb_layer.proj.bias.data)
+    emb_layer.cls_token.data = torch.ones_like(emb_layer.cls_token.data)
+    emb_layer.pos_embed.data = torch.ones_like(emb_layer.pos_embed.data)
+    patch_mixture = PatchembedMixture(emb_layer,[6,8,10])
+    x = torch.ones(1,3,32,32)
+    weights = torch.tensor([0.7,0.2,0.1],requires_grad=True)
+    out = patch_mixture(x,weights,use_argmax=False)
+    print(out.shape)
+    print(out)
+    loss = out.sum()
+    loss.backward()
+    print(weights.grad)'''

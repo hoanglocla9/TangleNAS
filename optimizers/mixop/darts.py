@@ -1,6 +1,6 @@
 from optimizers.mixop.base_mixop import MixOp
 import torch
-
+from sparsemax import Sparsemax
 from optimizers.mixop.entangle import EntangleMixOp, EntangledOp
 
 class DARTSMixOp(MixOp):
@@ -22,6 +22,7 @@ class DARTSMixOp(MixOp):
         else:
             weights = self.preprocess_combi(weights[0], weights[1])
         params = 0
+
         for w, op in zip(weights, ops):
             out = out + w * op(x)
 
@@ -153,5 +154,34 @@ class DARTSMixOp(MixOp):
 class DARTSMixOpV2(EntangleMixOp):
 
     def preprocess_weights(self, weights):
-        weights = torch.nn.functional.softmax(weights, dim=-1)
+        sparsemax = Sparsemax()
+        weights = sparsemax(weights)
         return weights
+
+    def preprocess_combi(self, weights):
+        out = 0
+        sparsemax = Sparsemax()
+        for i in range(len(weights)):
+            weights[i] = sparsemax(weights[i])
+        if len(weights) == 2:
+            out = weights[0].reshape(weights[0].shape[0], 1) @ weights[1].reshape(1, weights[1].shape[0])
+            out = out.flatten()
+        elif len(weights) == 3:
+            out = weights[0].reshape(weights[0].shape[0], 1) @ weights[1].reshape(1, weights[1].shape[0])
+            out = out.flatten()
+            out = out.reshape(out.shape[0], 1) @ weights[2].reshape(1, weights[2].shape[0])
+            out = out.flatten()
+        return out
+
+    def forward_depth(self, x_list, weights, params_list=[], add_params=False):
+        out = 0
+        weights = self.preprocess_weights(weights)
+        for w, x in zip(weights, x_list):
+            out = out + w * x 
+        params = 0
+        if add_params == True:
+            for w, param in zip(weights, params_list):
+                params = params + w * param
+            return out, params
+        else:
+            return out

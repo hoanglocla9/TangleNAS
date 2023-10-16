@@ -7,9 +7,10 @@ import torch.nn as nn
 from copy import deepcopy
 
 from search_spaces.NATS.operations import OPS
-from search_spaces.NATS.operations import OPS_sub
+from search_spaces.NATS.operations import OPS_sub, OPS_mix, Identity
 from optimizers.optim_factory import get_mixop
 import itertools
+from optimizers.mixop.entangle import EntangledOp
 # Cell for NAS-Bench-201
 
 
@@ -121,9 +122,11 @@ class InferCellV2(nn.Module):
                  C_out,
                  stride,
                  affine=True,
-                 track_running_stats=True):
+                 track_running_stats=True,
+                 use_we_v2=False):
         super(InferCellV2, self).__init__()
         channels_choice = [8, 16, 24, 32, 40, 48, 56, 64]
+        self.channels_choice = channels_choice
         self.layers = nn.ModuleList()
         self.ops_list = []
         self.node_IN = []
@@ -143,13 +146,26 @@ class InferCellV2(nn.Module):
                     layer = OPS[op_name](64, 64, 1, affine,
                                          track_running_stats)
                     stride = 1
-                self.ops_list.append([
+                if use_we_v2:
+                  if op_name == "skip_connect":
+                    identity_indices = [0,9,18,27,36,45,54,63]
+                    op = OPS_mix[op_name](layer, channels_choice)
+                    ops = self._init_entangled_op_cross(op)
+                    for i in identity_indices:
+                        ops[i] = Identity()
+                    ops[1] = EntangledOp(op=op,name="channel")
+                    self.ops_list.append(ops)                             
+                  else:
+                    op = OPS_mix[op_name](layer, channels_choice)
+                    self.ops_list.append(self._init_entangled_op_cross(op))
+                else:
+                    self.ops_list.append([
                     OPS_sub[op_name](c1,
                                      c2,
                                      max(channels_choice),
                                      stride=stride) for (c1, c2) in
                     itertools.product(channels_choice, channels_choice)
-                ])
+                    ])
                 cur_index.append(len(self.layers))
                 cur_innod.append(op_in)
                 self.layers.append(layer)
@@ -175,27 +191,30 @@ class InferCellV2(nn.Module):
         return (string + ", [{:}]".format(" | ".join(laystr)) +
                 ", {:}".format(self.genotype.tostr()))
 
+    def _init_entangled_op(self, op):
+        ops = [EntangledOp(op=None, name="channel") for i in self.channels_choice[:-1]] + [EntangledOp(op=op,name="channel")]
+        return ops
+
+    def _init_entangled_op_cross(self, op):
+        self.channels_list_cross = list(itertools.product(self.channels_choice, self.channels_choice))
+        ops = [EntangledOp(op=None, name="channel") for i,j in self.channels_list_cross[:-1]] + [EntangledOp(op=op,name="channel")]
+        return ops
+
     def forward(self, inputs, alphas1, alphas2):
         nodes = [inputs]
-        #print(inputs.shape)
         assert len(self.layers) == len(self.ops_list)
 
         for i, (node_layers,
                 node_innods) in enumerate(zip(self.node_IX, self.node_IN)):
             node_feature = 0
-            #print(len(node_layers))
-            #print(len(node_innods))
             for _il, _ii in zip(node_layers, node_innods):
                 input = nodes[_ii]
-                #print(input.shape)
                 node_feature = node_feature + self.mixop.forward_layer(
                     input, [alphas1, alphas2],
                     self.ops_list[_il],
                     self.layers[_il],
                     combi=True)
             nodes.append(node_feature)
-            #for i in range(len(nodes)):
-            #    print(nodes[i].shape)
         return nodes[-1]
 
 

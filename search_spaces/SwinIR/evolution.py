@@ -6,12 +6,16 @@ import torch
 import torch.backends.cudnn as cudnn
 from pathlib import Path
 from utils import utils_image as util
+from lib.datasets import build_dataset
+from lib import utils
+from supernet_engine import evaluate
+from model.supernet_transformer import Vision_TransformerSuper
 import argparse
 import os
-from collections import OrderedDict
 import yaml
 from torch.utils.data import DataLoader
 from utils import utils_option as option
+from lib.config import cfg, update_config_from_file
 from data.select_dataset import define_Dataset
 def decode_cand_tuple(cand_tuple, config_keys):
     config = {}
@@ -23,7 +27,7 @@ def decode_cand_tuple(cand_tuple, config_keys):
 
 class EvolutionSearcher(object):
 
-    def __init__(self, opt, args, device, model, model_without_ddp, val_loader, output_dir):
+    def __init__(self, opt, args, device, model, model_without_ddp, val_loader, test_loader, output_dir):
         self.device = device
         self.opt = opt
         self.model = model
@@ -38,7 +42,7 @@ class EvolutionSearcher(object):
         self.parameters_limits = args.param_limits
         self.min_parameters_limits = args.min_param_limits
         self.val_loader = val_loader
-        #self.test_loader  = test_loader
+        self.test_loader  = test_loader
         self.output_dir = output_dir
         self.s_prob =args.s_prob
         self.memory = []
@@ -56,7 +60,6 @@ class EvolutionSearcher(object):
         idx = 0
         border = self.opt['scale']
         for data in loader:
-            self.model.eval()
             idx += 1
             self.model.set_config(sampled_config)
             image_name_ext = os.path.basename(data['L_path'][0])
@@ -65,16 +68,10 @@ class EvolutionSearcher(object):
             img_dir = os.path.join(self.opt['path']['images'], img_name)
             util.mkdir(img_dir)
 
-            #self.model.feed_data(data)
-            L = data['L'].to(self.device)
-            E= self.model(L)
-            #self.model.test()
-            H = data['H'].to(self.device)
-            out_dict = OrderedDict()
-            out_dict['L'] = L.detach()[0].float().cpu()
-            out_dict['E'] = E.detach()[0].float().cpu()
-            out_dict["H"] = H.detach()[0].float().cpu()
-            visuals = out_dict
+            self.model.feed_data(data)
+            self.model.test()
+
+            visuals = self.model.current_visuals()
             E_img = util.tensor2uint(visuals['E'])
             H_img = util.tensor2uint(visuals['H'])
 
@@ -132,18 +129,22 @@ class EvolutionSearcher(object):
         config_keys = list(self.model.sample_random_config().keys())
         sampled_config = decode_cand_tuple(cand, config_keys)
         self.model.set_config(sampled_config)
-        eval_stats = self.evaluate(self.val_loader, sampled_config)
-        #test_stats, num_params_test = self.evaluate(self.test_loader,retrain_config=sampled_config)
-        #info['params'] = num_params_eval
-        #if info['params'] > self.parameters_limits:
-        #    print('parameters limit exceed')
-        #    return False
 
-        #if info['params'] < self.min_parameters_limits:
-        #    print('under minimum parameters limit')
-        #    return False
+
+
+        print("rank:", utils.get_rank(), cand, info['params'])
+        eval_stats, num_params_eval = self.evaluate(self.val_loader, retrain_config=sampled_config)
+        test_stats, num_params_test = self.evaluate(self.test_loader,retrain_config=sampled_config)
+        info['params'] = num_params_test
+        if info['params'] > self.parameters_limits:
+            print('parameters limit exceed')
+            return False
+
+        if info['params'] < self.min_parameters_limits:
+            print('under minimum parameters limit')
+            return False
         info['psnr'] = eval_stats
-        #info['test_psnr'] = test_stats
+        info['test_psnr'] = test_stats
 
 
         info['visited'] = True
@@ -172,10 +173,10 @@ class EvolutionSearcher(object):
 
         cand_tuple = list()
         sampled_config = self.model.sample_random_config()
-        #print(sampled_config)
         dimensions = list(sampled_config.keys())
         for dimension in dimensions:
-            cand_tuple.append(sampled_config[dimension])
+           for i in sampled_config[dimension]:
+               cand_tuple.append(i)
         return tuple(cand_tuple)
 
     def get_random(self, num):
@@ -203,35 +204,36 @@ class EvolutionSearcher(object):
             # embed dim
             random_s = random.random()
             if random_s < s_prob:
-                new_embed_dim = random.choice(self.model.config['embed_dim'])
+                new_embed_dim = random.choice(self.model.choices['embed_dim'])
                 sampled_config["embed_dim"] = new_embed_dim
 
             # num rstb
             random_s = random.random()
             if random_s < s_prob:
-                new_num_rstb = random.choice(self.model.config['num_rstb'])
+                new_num_rstb = random.choice(self.model.choices['num_rstb'])
                 sampled_config['num_rstb'] = new_num_rstb
 
             #num swin
             for d in range(4):
                 random_s = random.random()
                 if random_s < s_prob:
-                    new_num_swin = np.random.choice(self.model.config["num_swin"],1)[0]
+                    new_num_swin = np.random.choice(self.model.choices["num_swin"],1)[0]
                     sampled_config["num_swin_" + str(d)] = new_num_swin
                     # mlp_ratio
                     for i in range(6):
                         random_s = random.random()
                         if random_s < m_prob:
-                            new_mlp_ratio = random.choice(self.model.config['mlp_ratio'])
+                            new_mlp_ratio = random.choice(self.model.choices['mlp_ratio'])
                             sampled_config["mlp_ratio_" + str(d) + "_" + str(i)] = new_mlp_ratio
                         random_s = random.random()
                         if random_s < m_prob:
-                            new_num_heads = random.choice(self.model.config['num_heads'])
+                            new_num_heads = random.choice(self.model.choices['num_heads'])
                             sampled_config["num_heads_" + str(d) + "_" + str(i)] = new_num_heads
             dimensions = list(sampled_config.keys())
             cand_tuple = []
             for dimension in dimensions:
-                    cand_tuple.append(sampled_config[dimension])
+                for i in sampled_config[dimension]:
+                    cand_tuple.append(i)
             return tuple(cand_tuple)
 
         cand_iter = self.stack_random_cand(random_func)
@@ -304,7 +306,7 @@ class EvolutionSearcher(object):
             tmp_accuracy = []
             for i, cand in enumerate(self.keep_top_k[50]):
                 print('No.{} {} Val PSNR = {}, Test PSNR = {}, params = {}'.format(
-                    i + 1, cand, self.vis_dict[cand]['psnr'],None, None))
+                    i + 1, cand, self.vis_dict[cand]['psnr'], self.vis_dict[cand]['test_psnr'], self.vis_dict[cand]['params']))
                 tmp_accuracy.append(self.vis_dict[cand]['psnr'])
             self.top_accuracies.append(tmp_accuracy)
 
@@ -336,6 +338,8 @@ def get_args_parser():
     parser.add_argument('--param-limits', type=float, default=23)
     parser.add_argument('--min-param-limits', type=float, default=18)
 
+    # config file
+    parser.add_argument('--cfg',help='experiment configure file name',required=True,type=str)
 
     # custom parameters
     parser.add_argument('--platform', default='pai', type=str, choices=['itp', 'pai', 'aml'],
@@ -374,6 +378,8 @@ def get_args_parser():
     parser.add_argument('--no_abs_pos', action='store_true')
 
     # Optimizer parameters
+    parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER',
+                        help='Optimizer (default: "adamw"')
     parser.add_argument('--opt-eps', default=1e-8, type=float, metavar='EPSILON',
                         help='Optimizer Epsilon (default: 1e-8)')
     parser.add_argument('--opt-betas', default=None, type=float, nargs='+', metavar='BETA',
@@ -494,77 +500,68 @@ def get_args_parser():
 
 def main(args):
 
+    update_config_from_file(args.cfg)
+    utils.init_distributed_mode(args)
 
     device = torch.device(args.device)
 
     print(args)
-
-    opt = option.parse(parser.parse_args().opt, is_train=True)
-    opt_net = opt['netG']
-    config = opt_net["config"]
-    net_type = opt_net['net_type']
     args_text = yaml.safe_dump(args.__dict__, default_flow_style=False)
     # save config for later experiments
     with open(os.path.join(args.output_dir, "config.yaml"), 'w') as f:
         f.write(args_text)
     # fix the seed for reproducibility
 
-    seed = args.seed 
+    seed = args.seed + utils.get_rank()
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(args.seed)
     cudnn.benchmark = True
-    train_set = define_Dataset(opt['datasets']["train"])
-    dataset_train, dataset_val = torch.utils.data.random_split(
-                        train_set,
-                        [int(0.9 * len(train_set)),
-                         int(0.1 * len(train_set))])
-    val_loader = DataLoader(dataset_val,
+    val_set = define_Dataset(opt['datasets']["val"])
+    val_loader = DataLoader(val_set,
                             batch_size=1,
                             shuffle=False,
-                            num_workers=2,
+                            num_workers=1,
                             drop_last=False,
                             pin_memory=True)
-    #test_set = define_Dataset(opt['datasets']["test"])
-    #test_loader = DataLoader(test_set,
-    #                        batch_size=1,
-    #                        shuffle=False,
-    #                        num_workers=1,
-    #                        drop_last=False,
-    #                        pin_memory=True)
+    test_set = define_Dataset(opt['datasets']["test"])
+    test_loader = DataLoader(test_set,
+                            batch_size=1,
+                            shuffle=False,
+                            num_workers=1,
+                            drop_last=False,
+                            pin_memory=True)
     print(f"Creating SuperSwinIR")
+    print(cfg)
     from models.network_swinir_inherit import SwinIR as net
-    config = {
-            "embed_dim": [36, 48, 60],
-            "mlp_ratio": [1, 2],
-            "num_rstb": [2, 3, 4],
-            "num_heads": [4, 6],
-            "num_swin": [4, 5, 6]
-        }
+    config = opt_net["config"]
+    opt = option.parse(parser.parse_args().opt, is_train=True)
+    opt_net = opt['netG']
+    net_type = opt_net['net_type']
 
     netG = net(config,
-                    upscale=2,
-                    img_size=(64, 64),
-                    window_size=8,
-                    img_range=1.,
-                    depths=[6, 6, 6, 6],
-                    embed_dim=60,
-                    num_heads=[[6, 6, 6, 6, 6, 6] for i in range(4)],
-                    mlp_ratio=[[2, 2, 2, 2, 2, 2] for i in range(4)],
-                    upsampler='pixelshuffledirect',
-                    resi_connection='1conv')
-    pretrained_model = torch.load("/work/dlclarge1/sukthank-transformer_search/GraViT-E/experiments/OneShotNASwithWE/superresolution/swinir_sr_lightweight_x2_spos/models/46700_E.pth")
-    #print(pretrained_model.keys())
+                   upscale=opt_net['upscale'],
+                   img_size=opt_net['img_size'],
+                   window_size=opt_net['window_size'],
+                   img_range=opt_net['img_range'],
+                   depths=opt_net['depths'],
+                   embed_dim=opt_net['embed_dim'],
+                   num_heads=[opt_net['num_heads'] for i in range(4)],
+                   mlp_ratio=[opt_net['mlp_ratio'] for i in range(4)],
+                   upsampler='pixelshuffledirect',
+                   resi_connection='1conv')
+    pretrained_model = torch.load(opt_net["load_path"])
+    print(pretrained_model.keys())
     #param_key_g = "params"
     netG.load_state_dict(
         pretrained_model, strict=True
     )
 
-    model = netG.cuda()
+    model.to(device)
     model_without_ddp = model
-    #if args.distributed:
-    #    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
-    #    model_without_ddp = model.module
+    if args.distributed:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model_without_ddp = model.module
 
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -572,7 +569,7 @@ def main(args):
 
 
     t = time.time()
-    searcher = EvolutionSearcher(opt, args, device, model, model_without_ddp, val_loader, args.output_dir)
+    searcher = EvolutionSearcher(opt, args, device, model, model_without_ddp, val_loader, test_loader, args.output_dir)
 
     searcher.search()
 

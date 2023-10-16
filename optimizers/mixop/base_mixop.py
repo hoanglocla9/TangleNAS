@@ -8,6 +8,10 @@ class MixOp(ABC):
         pass
 
     @abstractmethod
+    def preprocess_combi(self):
+        pass
+
+    @abstractmethod
     def forward(self, x, alpha, ops):
         pass
 

@@ -122,10 +122,11 @@ class NATSSearchSpaceV1(SearchNetworkBase):
                  reg_scale=1e-3,
                  affine=False,
                  track_running_stats=False,
-                 path_to_benchmark = '.',
+                 path_to_benchmark = '/work/dlclarge1/sukthank-transformer_search/GraViT-E/main/OneShotNASwithWE/data/NATS-sss-v1_0-50262-simple',
                  initialize_api = True):
         super(NATSSearchSpaceV1, self).__init__()
         channels = [64, 64, 64, 64, 64]
+        self._channels = channels
         self.genotype_best = genotype
         self.reg_type = reg_type
         self.reg_scale = reg_scale
@@ -328,7 +329,7 @@ class NATSSearchSpaceV1(SearchNetworkBase):
                                            arch_params[-1].to(inputs.device),
                                            self.lastactbn_ops, self.lastactbn)
         out = self.lastactact(feature)
-        out = self.mixop.forward_layer(feature,
+        out = self.mixop.forward_layer(out,
                                        arch_params[-1].to(inputs.device),
                                        self.global_pooling_ops,
                                        self.global_pooling)

@@ -25,6 +25,7 @@ import torch.nn.functional as F
 import pickle
 import pandas as pd
 from architect import Architect
+import wandb
 
 
 def optimizer_kwargs(cfg):
@@ -339,6 +340,13 @@ def get_args_parser():
         'Probability of switching to cutmix when both mixup and cutmix enabled'
     )
     parser.add_argument(
+        '--arch_epoch',
+        type=int,
+        default=0,
+        help=
+        'arch epoch'
+    )
+    parser.add_argument(
         '--mixup-mode',
         type=str,
         default='batch',
@@ -349,12 +357,12 @@ def get_args_parser():
     parser.add_argument(
         '--data-path',
         default=
-        'imagenet/',
+        '/work/dlclarge2/sukthank-tanglenas/imagenet/',
         type=str,
         help='dataset path')
     parser.add_argument('--data-set',
                         default='IMNET',
-                        choices=['CIFAR', 'IMNET', 'INAT', 'INAT19'],
+                        choices=['CIFAR10', 'CIFAR100', 'IMNET', 'INAT', 'INAT19'],
                         type=str,
                         help='Image Net dataset path')
     parser.add_argument('--inat-category',
@@ -437,13 +445,13 @@ def get_args_parser():
     parser.add_argument(
         '--model_path',
         default=
-        "checkpoint.pth",
+        "/work/dlclarge2/sukthank-tanglenas/TangleNAS-dev/output_cifar10_darts_1000_0_8_224_we2/checkpoint_1310.pth",
         type=str,
         help='pretrained_model_path')
     parser.add_argument(
         '--df_path',
         default=
-        "df_archs.pkl",
+        "/work/dlclarge2/sukthank-tanglenas/TangleNAS-dev/output_cifar10_darts_1000_0_8_224_we2/arch_trajectory.pkl",
         type=str,
         help='architecture path')
 
@@ -472,6 +480,12 @@ def main(args):
     if args.distributed:
         num_tasks = utils.get_world_size()
         global_rank = utils.get_rank()
+
+        if global_rank == 0:
+            project_name = "tanglenas-submission-autoformer"
+            wandb.init(project=project_name, entity="nas-team-freiburg")
+            wandb.config.update(vars(args))
+
         if args.repeated_aug:
             sampler_train = RASampler(dataset_train,
                                       num_replicas=num_tasks,
@@ -645,6 +659,7 @@ def main(args):
             if args.model_ema:
                 utils._load_checkpoint_for_ema(model_ema,
                                                checkpoint['model_ema'])
+
     ckpt = torch.load(args.model_path, map_location="cpu")
     temp_dict = {}
     for k in ckpt["model"].keys():
@@ -652,14 +667,22 @@ def main(args):
             temp_dict["cls_token"] = ckpt["model"][k]
         elif k == "patch_embed_super.pos_embed":
             temp_dict["pos_embed"] = ckpt["model"][k]
+        elif "alpha" in k:
+            continue
         #elif "head" in k:
         #    continue
         else:
             temp_dict[k] = ckpt["model"][k]
     model_without_ddp.load_state_dict(temp_dict)  #, strict=False)
+    '''optimizer.load_state_dict(ckpt['optimizer'])
+    lr_scheduler.load_state_dict(ckpt['lr_scheduler'])
+    args.start_epoch = ckpt['epoch'] + 1
+    if 'scaler' in ckpt:
+        loss_scaler.load_state_dict(ckpt['scaler'])'''
     with open(args.df_path, "rb") as f:
         df = pickle.load(f)
-    best_config = derive_best_config(df.iloc[-1])
+    keys = list(df.keys())
+    best_config = derive_best_config(df[str(args.arch_epoch)])
     model_without_ddp.set_sample_config(best_config)
     retrain_config = None
     if args.mode == 'retrain' and "RETRAIN" in cfg:
@@ -702,10 +725,10 @@ def main(args):
             teach_loss=teacher_loss,
             choices=choices,
             mode=args.mode,
-            retrain_config=retrain_config,
+            retrain_config=best_config,
         )
         lr_scheduler.step(epoch)
-        if epoch % 100 == 0 or epoch == 999:
+        if epoch % 1 == 0 or epoch == 999:
             if args.output_dir:
                 checkpoint_paths = [
                     str(output_dir) + "/" + 'checkpoint_' + str(epoch) + '.pth'
@@ -729,7 +752,7 @@ def main(args):
                               amp=args.amp,
                               choices=choices,
                               mode=args.mode,
-                              retrain_config=retrain_config)
+                              retrain_config=best_config)
         print(
             f"Accuracy of the network on the {len(dataset_test)} test images: {test_stats['acc1']:.1f}%"
         )
@@ -744,6 +767,10 @@ def main(args):
         }
 
         if args.output_dir and utils.is_main_process():
+            try:
+                wandb.log(log_stats)
+            except Exception as e:
+                print("Wandb logging failed: ", e)
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
@@ -759,4 +786,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+
     main(args)

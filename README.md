@@ -1,7 +1,7 @@
-## Official repo for the paper titled _Weight-Entanglement Meets Gradient-Based Neural Architecture Search_
+# TangleNAS
+Official repo for the paper TangleNAS: Weight Entanglement meets One-Shot Optimization.
 
-## ![Overview](figures/overview.png)
-
+![title](figures/overview.png)
 ## Overview
 1. [Installation & Dependencies](#Dependencies)
 2. [Working Tree and Dataset Preparation](#dataset)
@@ -15,8 +15,8 @@
 
 To install the dependencies:
 ```bash
-conda create --name naswithwe python=3.9
-conda activate naswithwe
+conda create --name tanglenas python=3.9
+conda activate tanglenas
 pip install -r requirements.txt
 ```
 
@@ -132,12 +132,3 @@ To inherit and finetune the best architecture from the autoformer search space.
 ```bash
 source job_scripts/job_autoformer_train.sh
 ```
-
-
-
-
-
-
-
-
-

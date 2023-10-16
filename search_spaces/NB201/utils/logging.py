@@ -54,8 +54,10 @@ class Logger(object):
         return "{name}(dir={log_dir}, use-tf={use_tf}, writer={writer})".format(
             name=self.__class__.__name__, **self.__dict__)
 
-    def path(self, mode):
+    def path(self, mode, epoch=None):
         valids = ("model", "best", "info", "log", None)
+        if epoch is not None:
+            return self.model_dir / "seed-{:}-{:}.pth".format(self.seed, epoch)
         if mode is None:
             return self.log_dir
         elif mode == "model":

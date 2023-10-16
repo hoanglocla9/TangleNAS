@@ -5,7 +5,8 @@ from typing import List, Text, Any
 import torch.nn as nn
 import torch
 from search_spaces.NATS.operations import ResNetBasicblock
-from search_spaces.NATS.operations import ResNetBasicblockSub
+from search_spaces.NATS.operations import ResNetBasicblockSub, ResNetBasicblockMixture
+from optimizers.mixop.entangle import EntangledOp
 from search_spaces.NATS.cells import InferCellV2
 import torch.nn.functional as F
 from nats_bench import create
@@ -18,8 +19,134 @@ from torch.distributions.dirichlet import Dirichlet
 from torch.distributions.kl import kl_divergence
 from search_spaces.base_model_search import SearchNetworkBase
 from search_spaces.NATS.genotypes import Structure as CellStructure
+import numpy as np
 
+class BatchNormMixture(torch.nn.Module):
 
+    def __init__(self, channels_list, max_channels, op):
+        super().__init__()
+        self.channels_list = channels_list
+        self.max_channels = max_channels
+        self.bn = op
+
+    def compute_bn_mixture(self, weights, op, use_argmax=False):
+        bn_weight = 0
+        if op.weight is not None:
+            if use_argmax:
+                argmax = np.array([w.item() for w in weights]).argmax()
+                bn_weight += F.pad(weights[argmax]*op.weight[:self.channels_list[argmax]],(0,self.max_channels-self.channels_list[argmax]),"constant", 0)
+            else:
+                for i,w in enumerate(weights):
+                    bn_weight += F.pad(w*op.weight[:self.channels_list[i]],(0,self.max_channels-self.channels_list[i]),"constant", 0)
+        else:
+            bn_weight= op.weight
+
+        bn_bias = 0
+        if op.bias is not None:
+            if use_argmax:
+                argmax = np.array([w.item() for w in weights]).argmax()
+                bn_bias += F.pad(weights[argmax]*op.bias[:self.channels_list[argmax]],(0,self.max_channels-self.channels_list[argmax]),"constant", 0)
+            else:
+                for i,w in enumerate(weights):
+                    bn_bias += F.pad(w*op.bias[:self.channels_list[i]],(0,self.max_channels-self.channels_list[i]),"constant", 0)
+        else:
+            bn_bias= op.bias
+        return bn_bias, bn_weight        
+
+    def forward(self, x, weights, use_argmax = False):
+        if self.bn.training:
+            bn_training = True
+        else:
+            bn_training = (self.bn.running_mean is None) and (self.bn.running_var is
+                                                         None)
+        if self.bn.momentum is None:
+            exponential_average_factor = 0.0
+        else:
+            exponential_average_factor = self.bn.momentum
+
+        if self.bn.training and self.bn.track_running_stats:
+            assert self.bn.num_batches_tracked is not None
+            self.bn.num_batches_tracked.add_(1)
+            if self.bn.momentum is None:  # use cumulative moving average
+                exponential_average_factor = 1.0 / self.bn.num_batches_tracked.item(
+                )
+            else:  # use exponential moving average
+                exponential_average_factor = self.bn.momentum
+        bn_weight, bn_bias = self.compute_bn_mixture(weights, self.bn, use_argmax=use_argmax)
+        x = F.batch_norm(
+            x,
+            # If buffers are not to be tracked,ensure that they won't be updated
+            self.bn.running_mean 
+            if not self.bn.training or self.bn.track_running_stats else None,
+            self.bn.running_var
+            if not self.bn.training or self.bn.track_running_stats else None,
+            bn_weight if bn_weight is not None else bn_weight,
+            bn_bias if bn_bias is not None else bn_bias,
+            bn_training,
+            exponential_average_factor,
+            self.bn.eps,
+        )
+        return x
+class StemMixture(torch.nn.Module):
+
+    def __init__(self, op, channels_list):
+        super().__init__()
+        self.op = op
+        self.channels_list = channels_list
+        self.max_channels = max(channels_list)
+        self.bn = BatchNormMixture(self.channels_list, self.max_channels, self.op[1])
+
+    def _compute_weight_and_bias(self, weights, idx, conv_weight, conv_bias, op_weight, op_bias):
+        alpha = weights[idx]
+        channel_size = self.channels_list[idx]
+        start = 0 
+        end = start + channel_size
+        #print(op_weight.shape)
+        weight_curr = op_weight[:end,:,:,:]
+        conv_weight += alpha * F.pad(weight_curr, (0,0,0,0,0,0,0,self.max_channels-channel_size), "constant", 0)
+        
+        if op_bias is not None:
+            bias = alpha * op_bias[:channel_size]
+            conv_bias += F.pad(bias,(self.max_channels-channel_size),"constant",0)
+
+        return conv_weight, conv_bias
+
+    def compute_weight_and_bias_mixture(self, weights, op_weight, op_bias, use_argmax=False):
+        conv_weight = 0
+        conv_bias = 0
+        if use_argmax == True:
+            argmax = np.array([w.item() for w in weights]).argmax()
+            conv_weight, conv_bias = self._compute_weight_and_bias(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                op_weight=op_weight,
+                op_bias=op_bias
+            )
+        else:
+            for i, _ in enumerate(weights):
+                conv_weight, conv_bias = self._compute_weight_and_bias(
+                    weights=weights,
+                    idx=i,
+                    conv_weight=conv_weight,
+                    conv_bias=conv_bias,
+                    op_weight=op_weight,
+                    op_bias=op_bias
+                )
+        if op_bias==None:
+            conv_bias = op_bias
+        return conv_weight, conv_bias
+
+    def forward(self, x, weights, use_argmax=False):
+        conv_weight, conv_bias = self.compute_weight_and_bias_mixture(weights, self.op[0].weight, self.op[0].bias, use_argmax=use_argmax)
+        x = torch.nn.functional.conv2d(x,
+                                       conv_weight,
+                                       conv_bias,
+                                       stride=self.op[0].stride,
+                                       padding=self.op[0].padding)
+        x = self.bn(x, weights, use_argmax=use_argmax)
+        return x
 class StemSampled(torch.nn.Module):
 
     def __init__(self, C, C_max):
@@ -36,6 +163,54 @@ class StemSampled(torch.nn.Module):
         x = self.bn_sampled(x, stem[1])
         return x
 
+class LinearMixture(torch.nn.Module):
+
+    def __init__(self, op, channels_list):
+        super(LinearMixture,self).__init__()
+        self.op = op
+        self.channels_list = channels_list
+        self.max_channels = max(channels_list)
+
+    def _compute_weight_and_bias(self, weights, idx, linear_weight, linear_bias, op_weight, op_bias):
+        alpha = weights[idx]
+        channel_size = self.channels_list[idx]
+        start = 0 
+        end = start + channel_size
+        weight_curr = op_weight[:,:channel_size]
+        linear_weight += alpha * F.pad(weight_curr, (0,self.max_channels-channel_size), "constant", 0)
+        linear_bias = op_bias
+
+        return linear_weight, linear_bias
+
+    def compute_weight_and_bias_mixture(self, weights, op_weight, op_bias, use_argmax=False):
+        linear_weight = 0
+        linear_bias = 0
+        if use_argmax == True:
+            argmax = np.array([w.item() for w in weights]).argmax()
+            linear_weight, linear_bias = self._compute_weight_and_bias(
+                weights=weights,
+                idx=argmax,
+                linear_weight=linear_weight,
+                linear_bias=linear_bias,
+                op_weight=op_weight,
+                op_bias=op_bias
+            )
+        else:
+            for i, _ in enumerate(weights):
+                linear_weight, linear_bias = self._compute_weight_and_bias(
+                    weights=weights,
+                    idx=i,
+                    linear_weight=linear_weight,
+                    linear_bias=linear_bias,
+                    op_weight=op_weight,
+                    op_bias=op_bias
+                )
+        return linear_weight, linear_bias
+
+    def forward(self, x, weights, use_argmax=False):
+        weight, bias = self.compute_weight_and_bias_mixture(weights, self.op.weight, self.op.bias, use_argmax=use_argmax)
+        x = F.linear(x, weight=weight, bias=bias)
+        return x
 
 class LinearSampled(torch.nn.Module):
 
@@ -140,7 +315,8 @@ class NATSSearchSpaceV2(SearchNetworkBase):
                  affine=True,
                  track_running_stats=True,
                  path_to_benchmark = "",
-                 initialize_api = True):
+                 initialize_api = True,
+                 use_we_v2=False):
         super(NATSSearchSpaceV2, self).__init__()
         channels = [64, 64, 64, 64, 64]
         self._channels = channels
@@ -148,6 +324,7 @@ class NATSSearchSpaceV2(SearchNetworkBase):
         self.reg_type = reg_type
         self.reg_scale = reg_scale
         self.affine = affine
+        self.use_we_v2 = use_we_v2
         self.track_running_stats = track_running_stats
         self.channels_choice = [8, 16, 24, 32, 40, 48, 56, 64]
         if len(channels) % 3 != 2:
@@ -158,11 +335,15 @@ class NATSSearchSpaceV2(SearchNetworkBase):
         self.stem = torch.nn.Sequential(
             nn.Conv2d(3, 64, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(64))
-        self.stem_ops = [StemSampled(c, 64) for c in self.channels_choice]
+        if self.use_we_v2==True:
+           op = StemMixture(self.stem,self.channels_choice)
+           self.stem_ops = self._init_entangled_op(op)
+        else:
+           self.stem_ops = [StemSampled(c, 64) for c in self.channels_choice]
         self.optimizer_type = optimizer_type
         self.path_to_benchmark=path_to_benchmark
         self.sampler = get_sampler(self.optimizer_type)
-        self.mixop = get_mixop(self.optimizer_type)
+        self.mixop = get_mixop(self.optimizer_type, use_we_v2=use_we_v2)
         layer_reductions = [False] * N + [True] + [False] * N + [
             True
         ] + [False] * N
@@ -178,35 +359,54 @@ class NATSSearchSpaceV2(SearchNetworkBase):
         for _, (_, reduction) in enumerate(zip(channels, layer_reductions)):
             if reduction:
                 cell = ResNetBasicblock(64, 64, 2, True)
-                cell_ops = []
-                for c_in in self.channels_choice:
-                    for c_out in self.channels_choice:
-                        cell_ops.append(ResNetBasicblockSub(c_in, c_out, 64))
+                if use_we_v2:
+                    cell_ops = self._init_entangled_op_cross(ResNetBasicblockMixture(cell,channels_list=self.channels_choice))
+                else:
+                    cell_ops = []
+                    for c_in in self.channels_choice:
+                        for c_out in self.channels_choice:
+                            if not self.use_we_v2:
+                               cell_ops.append(ResNetBasicblockSub(c_in, c_out, 64))
                 self.cell_ops.append(cell_ops)
             else:
-                cell = InferCellV2(self.mixop, genotype, 64, 64, 1, affine=affine, track_running_stats=track_running_stats)
+                cell = InferCellV2(self.mixop, genotype, 64, 64, 1, affine=affine, track_running_stats=track_running_stats, use_we_v2=use_we_v2)
             self.cells.append(cell)
             c_prev = cell.out_dim
         self._num_layer = len(self.cells)
 
         self.lastactbn = nn.BatchNorm2d(64)
-        self.lastactbn_ops = [
-            BatchNormSampled(c, 64) for c in self.channels_choice
-        ]
+        if use_we_v2:
+           op = BatchNormMixture(channels_list=self.channels_choice,max_channels=64, op=self.lastactbn)
+           self.lastactbn_ops = self._init_entangled_op(op)
+        else:
+            self.lastactbn_ops = [
+            BatchNormSampled(c, 64) for c in self.channels_choice]
         self.lastactact = nn.ReLU(inplace=True)
         self.global_pooling = nn.AdaptiveAvgPool2d(1)
-        self.global_pooling_ops = [
-            AdaptivePoolingSampled(c, 64) for c in self.channels_choice
-        ]
+        if not use_we_v2:
+            self.global_pooling_ops = [
+            AdaptivePoolingSampled(c, 64) for c in self.channels_choice]
         self.classifier = nn.Linear(64, num_classes)
-        self.classifier_ops = [
-            LinearSampled(c, 64) for c in self.channels_choice
-        ]
+        if self.use_we_v2:
+            op = LinearMixture(self.classifier, self.channels_choice)
+            self.classifier_ops = self._init_entangled_op(op)
+        else:
+            self.classifier_ops = [
+            LinearSampled(c, 64) for c in self.channels_choice]
         self.relu = torch.nn.ReLU()
         self.tau = torch.Tensor([10])
         self._criterion = criterion
         self._initialize_alphas()
         self._initialize_anchors()
+
+    def _init_entangled_op(self, op):
+        ops = [EntangledOp(op=None, name="channel") for i in self.channels_choice[:-1]] + [EntangledOp(op=op,name="channel")]
+        return ops
+
+    def _init_entangled_op_cross(self, op):
+        self.channels_list_cross = list(itertools.product(self.channels_choice, self.channels_choice))
+        ops = [EntangledOp(op=None, name="channel") for i,j in self.channels_list_cross[:-1]] + [EntangledOp(op=op,name="channel")]
+        return ops
 
     def _initialize_anchors(self):
         self.anchor_1 = Dirichlet(torch.ones_like(self.alphas_level_1))
@@ -228,7 +428,7 @@ class NATSSearchSpaceV2(SearchNetworkBase):
                                       self.reg_type, self.reg_scale,
                                       path_to_benchmark=self.path_to_benchmark,
                                       affine=self.affine, track_running_stats=self.track_running_stats,
-                                      initialize_api=False).cuda()
+                                      initialize_api=False, use_we_v2=self.use_we_v2).cuda()
         for x, y in zip(model_new.arch_parameters(), self.arch_parameters()):
             x.data.copy_(y.data)
         return model_new
@@ -314,6 +514,7 @@ class NATSSearchSpaceV2(SearchNetworkBase):
             if cell.__class__.__name__ == "ResNetBasicblock":
                 op_list = self.cell_ops[i_res]
                 #print(feature.shape)
+                #print(op_list)
                 feature = self.mixop.forward_layer(feature, [
                     arch_params[arch_param_id - 1], arch_params[arch_param_id]
                 ],
@@ -330,7 +531,11 @@ class NATSSearchSpaceV2(SearchNetworkBase):
                                            arch_params[-1].to(inputs.device),
                                            self.lastactbn_ops, self.lastactbn)
         out = self.lastactact(feature)
-        out = self.mixop.forward_layer(feature,
+        if self.use_we_v2:
+            out = self.global_pooling(out)
+            out = out.view(out.size(0), -1)
+        else:
+            out = self.mixop.forward_layer(out,
                                        arch_params[-1].to(inputs.device),
                                        self.global_pooling_ops,
                                        self.global_pooling)
@@ -344,4 +549,4 @@ class NATSSearchSpaceV2(SearchNetworkBase):
 #model = NATSSearchSpaceV2("gdas", genotype=CellStructure.str2structure('|nor_conv_3x3~0|+|nor_conv_3x3~0|nor_conv_3x3~1|+|skip_connect~0|nor_conv_3x3~1|nor_conv_3x3~2|'), num_classes=10, criterion=nn.CrossEntropyLoss())#.cuda()
 #img = torch.randn([64,3,32,32])#.cuda()
 #print(model(img)[-1].shape)
-#torch.save(model.state_dict(), ".")
+#torch.save(model.state_dict(), "/work/dlclarge1/sukthank-transformer_search/GraViT-E/model_nats.path")

@@ -11,9 +11,6 @@ def define_Model(opt):
     if model == 'plain':
         from models.model_plain import ModelPlain as M
 
-    if model == 'plain_inherit':
-        from models.model_plain_inherit import ModelPlain as M
-
     elif model == 'plain2':  # two inputs: L, C
         from models.model_plain2 import ModelPlain2 as M
 

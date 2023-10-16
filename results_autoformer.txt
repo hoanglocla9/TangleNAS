@@ -1,0 +1,95 @@
+# CIFAR 100 0.5 epoch 500
+{'embed_dim': 216, 'layer_num': 14, 'num_heads_0': 4, 'mlp_ratio_0': 4, 'num_heads_1': 4, 'mlp_ratio_1': 4, 'num_heads_2': 4, 'mlp_ratio_2': 4, 'num_heads_3': 4, 'mlp_ratio_3': 4, 'num_heads_4': 4, 'mlp_ratio_4': 4, 'num_heads_5': 4, 'mlp_ratio_5': 4, 'num_heads_6': 4, 'mlp_ratio_6': 4, 'num_heads_7': 4, 'mlp_ratio_7': 4, 'num_heads_8': 4, 'mlp_ratio_8': 3.5, 'num_heads_9': 4, 'mlp_ratio_9': 4, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 4, 'num_heads_13': 4, 'mlp_ratio_13': 4, 'epoch': 499}
+# CIFAR 100 0.5 epoch 375
+{'embed_dim': 216, 'layer_num': 14, 'num_heads_0': 4, 'mlp_ratio_0': 3.5, 'num_heads_1': 4, 'mlp_ratio_1': 4, 'num_heads_2': 4, 'mlp_ratio_2': 4, 'num_heads_3': 4, 'mlp_ratio_3': 4, 'num_heads_4': 4, 'mlp_ratio_4': 4, 'num_heads_5': 4, 'mlp_ratio_5': 4, 'num_heads_6': 4, 'mlp_ratio_6': 4, 'num_heads_7': 4, 'mlp_ratio_7': 4, 'num_heads_8': 4, 'mlp_ratio_8': 4, 'num_heads_9': 4, 'mlp_ratio_9': 4, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 4, 'num_heads_13': 4, 'mlp_ratio_13': 4, 'epoch': 374}
+# CIFAR 100 0.5 epoch 250
+{'embed_dim': 216, 'layer_num': 14, 'num_heads_0': 3, 'mlp_ratio_0': 3.5, 'num_heads_1': 4, 'mlp_ratio_1': 4, 'num_heads_2': 4, 'mlp_ratio_2': 4, 'num_heads_3': 4, 'mlp_ratio_3': 3.5, 'num_heads_4': 4, 'mlp_ratio_4': 3.5, 'num_heads_5': 4, 'mlp_ratio_5': 4, 'num_heads_6': 4, 'mlp_ratio_6': 4, 'num_heads_7': 4, 'mlp_ratio_7': 4, 'num_heads_8': 4, 'mlp_ratio_8': 4, 'num_heads_9': 4, 'mlp_ratio_9': 4, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 4, 'num_heads_13': 4, 'mlp_ratio_13': 4, 'epoch': 249}
+# CIFAR 100 0.5 epoch 125
+{'embed_dim': 192, 'layer_num': 14, 'num_heads_0': 3, 'mlp_ratio_0': 3.5, 'num_heads_1': 4, 'mlp_ratio_1': 3.5, 'num_heads_2': 4, 'mlp_ratio_2': 3.5, 'num_heads_3': 4, 'mlp_ratio_3': 3.5, 'num_heads_4': 4, 'mlp_ratio_4': 3.5, 'num_heads_5': 4, 'mlp_ratio_5': 3.5, 'num_heads_6': 4, 'mlp_ratio_6': 3.5, 'num_heads_7': 4, 'mlp_ratio_7': 3.5, 'num_heads_8': 4, 'mlp_ratio_8': 3.5, 'num_heads_9': 4, 'mlp_ratio_9': 4, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 4, 'num_heads_13': 3, 'mlp_ratio_13': 3.5, 'epoch': 124}
+
+# CIFAR 100 0.8 epoch 500
+{'embed_dim': 240, 'layer_num': 14, 'num_heads_0': 4, 'mlp_ratio_0': 3.5, 'num_heads_1': 4, 'mlp_ratio_1': 4, 'num_heads_2': 4, 'mlp_ratio_2': 4, 'num_heads_3': 4, 'mlp_ratio_3': 4, 'num_heads_4': 4, 'mlp_ratio_4': 4, 'num_heads_5': 4, 'mlp_ratio_5': 4, 'num_heads_6': 4, 'mlp_ratio_6': 4, 'num_heads_7': 4, 'mlp_ratio_7': 4, 'num_heads_8': 4, 'mlp_ratio_8': 4, 'num_heads_9': 4, 'mlp_ratio_9': 4, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 4, 'num_heads_13': 4, 'mlp_ratio_13': 4, 'epoch': 499}
+
+# CIFAR 100 0.8 epoch 375
+{'embed_dim': 216, 'layer_num': 14, 'num_heads_0': 4, 'mlp_ratio_0': 3.5, 'num_heads_1': 4, 'mlp_ratio_1': 4, 'num_heads_2': 4, 'mlp_ratio_2': 4, 'num_heads_3': 4, 'mlp_ratio_3': 4, 'num_heads_4': 4, 'mlp_ratio_4': 4, 'num_heads_5': 4, 'mlp_ratio_5': 4, 'num_heads_6': 4, 'mlp_ratio_6': 4, 'num_heads_7': 4, 'mlp_ratio_7': 4, 'num_heads_8': 4, 'mlp_ratio_8': 4, 'num_heads_9': 4, 'mlp_ratio_9': 4, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 4, 'num_heads_13': 4, 'mlp_ratio_13': 4, 'epoch': 374}
+
+# CIFAR 100 0.8 epoch 250
+{'embed_dim': 216, 'layer_num': 14, 'num_heads_0': 3, 'mlp_ratio_0': 3.5, 'num_heads_1': 4, 'mlp_ratio_1': 4, 'num_heads_2': 4, 'mlp_ratio_2': 4, 'num_heads_3': 4, 'mlp_ratio_3': 3.5, 'num_heads_4': 4, 'mlp_ratio_4': 3.5, 'num_heads_5': 4, 'mlp_ratio_5': 4, 'num_heads_6': 4, 'mlp_ratio_6': 4, 'num_heads_7': 4, 'mlp_ratio_7': 4, 'num_heads_8': 4, 'mlp_ratio_8': 4, 'num_heads_9': 4, 'mlp_ratio_9': 4, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 4, 'num_heads_13': 4, 'mlp_ratio_13': 4, 'epoch': 249}
+
+# CIFAR100 0.8 epoch 125
+{'embed_dim': 192, 'layer_num': 14, 'num_heads_0': 3, 'mlp_ratio_0': 3.5, 'num_heads_1': 4, 'mlp_ratio_1': 3.5, 'num_heads_2': 4, 'mlp_ratio_2': 3.5, 'num_heads_3': 4, 'mlp_ratio_3': 3.5, 'num_heads_4': 4, 'mlp_ratio_4': 3.5, 'num_heads_5': 4, 'mlp_ratio_5': 3.5, 'num_heads_6': 4, 'mlp_ratio_6': 3.5, 'num_heads_7': 4, 'mlp_ratio_7': 3.5, 'num_heads_8': 4, 'mlp_ratio_8': 3.5, 'num_heads_9': 4, 'mlp_ratio_9': 4, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 4, 'num_heads_13': 3, 'mlp_ratio_13': 3.5, 'epoch': 124}
+
+# CIFAR 10 0.5 epoch 500
+{'embed_dim': 216, 'layer_num': 14, 'num_heads_0': 4, 'mlp_ratio_0': 4, 'num_heads_1': 4, 'mlp_ratio_1': 4, 'num_heads_2': 4, 'mlp_ratio_2': 4, 'num_heads_3': 4, 'mlp_ratio_3': 4, 'num_heads_4': 4, 'mlp_ratio_4': 4, 'num_heads_5': 4, 'mlp_ratio_5': 4, 'num_heads_6': 4, 'mlp_ratio_6': 4, 'num_heads_7': 4, 'mlp_ratio_7': 4, 'num_heads_8': 4, 'mlp_ratio_8': 4, 'num_heads_9': 4, 'mlp_ratio_9': 3.5, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 3.5, 'num_heads_13': 4, 'mlp_ratio_13': 4, 'epoch': 499}
+
+# CIFAR 10 0.5 epoch 375
+{'embed_dim': 216, 'layer_num': 14, 'num_heads_0': 4, 'mlp_ratio_0': 3.5, 'num_heads_1': 4, 'mlp_ratio_1': 4, 'num_heads_2': 4, 'mlp_ratio_2': 4, 'num_heads_3': 4, 'mlp_ratio_3': 3.5, 'num_heads_4': 4, 'mlp_ratio_4': 4, 'num_heads_5': 4, 'mlp_ratio_5': 3.5, 'num_heads_6': 4, 'mlp_ratio_6': 4, 'num_heads_7': 4, 'mlp_ratio_7': 3.5, 'num_heads_8': 4, 'mlp_ratio_8': 4, 'num_heads_9': 4, 'mlp_ratio_9': 4, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 4, 'num_heads_13': 4, 'mlp_ratio_13': 3.5, 'epoch': 374}
+
+# CIFAR 10 0.5 epoch 250
+{'embed_dim': 192, 'layer_num': 13, 'num_heads_0': 4, 'mlp_ratio_0': 3.5, 'num_heads_1': 4, 'mlp_ratio_1': 3.5, 'num_heads_2': 4, 'mlp_ratio_2': 3.5, 'num_heads_3': 4, 'mlp_ratio_3': 3.5, 'num_heads_4': 4, 'mlp_ratio_4': 3.5, 'num_heads_5': 4, 'mlp_ratio_5': 3.5, 'num_heads_6': 4, 'mlp_ratio_6': 3.5, 'num_heads_7': 4, 'mlp_ratio_7': 3.5, 'num_heads_8': 4, 'mlp_ratio_8': 3.5, 'num_heads_9': 4, 'mlp_ratio_9': 3.5, 'num_heads_10': 4, 'mlp_ratio_10': 3.5, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 3.5, 'num_heads_13': 3, 'mlp_ratio_13': 3.5, 'epoch': 249}
+
+# CIFAR 10 0.5 epoch 125
+{'embed_dim': 192, 'layer_num': 13, 'num_heads_0': 4, 'mlp_ratio_0': 3.5, 'num_heads_1': 4, 'mlp_ratio_1': 3.5, 'num_heads_2': 4, 'mlp_ratio_2': 3.5, 'num_heads_3': 4, 'mlp_ratio_3': 3.5, 'num_heads_4': 4, 'mlp_ratio_4': 3.5, 'num_heads_5': 4, 'mlp_ratio_5': 3.5, 'num_heads_6': 4, 'mlp_ratio_6': 3.5, 'num_heads_7': 4, 'mlp_ratio_7': 3.5, 'num_heads_8': 4, 'mlp_ratio_8': 3.5, 'num_heads_9': 4, 'mlp_ratio_9': 3.5, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 3.5, 'num_heads_12': 4, 'mlp_ratio_12': 4, 'num_heads_13': 3, 'mlp_ratio_13': 3.5, 'epoch': 124}
+
+# CIFAR10 0.8 epoch 500
+{'embed_dim': 240, 'layer_num': 14, 'num_heads_0': 4, 'mlp_ratio_0': 4, 'num_heads_1': 4, 'mlp_ratio_1': 4, 'num_heads_2': 4, 'mlp_ratio_2': 4, 'num_heads_3': 4, 'mlp_ratio_3': 4, 'num_heads_4': 4, 'mlp_ratio_4': 4, 'num_heads_5': 4, 'mlp_ratio_5': 4, 'num_heads_6': 4, 'mlp_ratio_6': 4, 'num_heads_7': 4, 'mlp_ratio_7': 4, 'num_heads_8': 4, 'mlp_ratio_8': 3.5, 'num_heads_9': 4, 'mlp_ratio_9': 4, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 3.5, 'num_heads_13': 4, 'mlp_ratio_13': 3.5, 'epoch': 499}
+
+# CIFAR10 0.8 epoch 375
+{'embed_dim': 216, 'layer_num': 14, 'num_heads_0': 4, 'mlp_ratio_0': 3.5, 'num_heads_1': 4, 'mlp_ratio_1': 4, 'num_heads_2': 4, 'mlp_ratio_2': 4, 'num_heads_3': 4, 'mlp_ratio_3': 4, 'num_heads_4': 4, 'mlp_ratio_4': 4, 'num_heads_5': 4, 'mlp_ratio_5': 4, 'num_heads_6': 4, 'mlp_ratio_6': 4, 'num_heads_7': 4, 'mlp_ratio_7': 3.5, 'num_heads_8': 4, 'mlp_ratio_8': 4, 'num_heads_9': 4, 'mlp_ratio_9': 4, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 4, 'num_heads_13': 3, 'mlp_ratio_13': 3.5, 'epoch': 374}
+
+# CIFAR10 0.8 epoch 250
+{'embed_dim': 192, 'layer_num': 13, 'num_heads_0': 3, 'mlp_ratio_0': 3.5, 'num_heads_1': 4, 'mlp_ratio_1': 3.5, 'num_heads_2': 4, 'mlp_ratio_2': 3.5, 'num_heads_3': 4, 'mlp_ratio_3': 3.5, 'num_heads_4': 4, 'mlp_ratio_4': 3.5, 'num_heads_5': 4, 'mlp_ratio_5': 3.5, 'num_heads_6': 4, 'mlp_ratio_6': 4, 'num_heads_7': 4, 'mlp_ratio_7': 3.5, 'num_heads_8': 4, 'mlp_ratio_8': 4, 'num_heads_9': 4, 'mlp_ratio_9': 3.5, 'num_heads_10': 4, 'mlp_ratio_10': 4, 'num_heads_11': 4, 'mlp_ratio_11': 3.5, 'num_heads_12': 4, 'mlp_ratio_12': 3.5, 'num_heads_13': 4, 'mlp_ratio_13': 4, 'epoch': 249}
+
+# # CIFAR10 0.8 epoch 125
+{'embed_dim': 192, 'layer_num': 14, 'num_heads_0': 3, 'mlp_ratio_0': 3.5, 'num_heads_1': 4, 'mlp_ratio_1': 3.5, 'num_heads_2': 4, 'mlp_ratio_2': 3.5, 'num_heads_3': 4, 'mlp_ratio_3': 3.5, 'num_heads_4': 4, 'mlp_ratio_4': 3.5, 'num_heads_5': 4, 'mlp_ratio_5': 3.5, 'num_heads_6': 4, 'mlp_ratio_6': 3.5, 'num_heads_7': 4, 'mlp_ratio_7': 3.5, 'num_heads_8': 4, 'mlp_ratio_8': 3.5, 'num_heads_9': 4, 'mlp_ratio_9': 3.5, 'num_heads_10': 4, 'mlp_ratio_10': 3.5, 'num_heads_11': 4, 'mlp_ratio_11': 4, 'num_heads_12': 4, 'mlp_ratio_12': 3.5, 'num_heads_13': 4, 'mlp_ratio_13': 4, 'epoch': 124}
+
+
+# Search Times
+# CIFAR10 0.5 
+500 -> 11.6333 hrs 
+375 -> 8.724975 hrs
+250 -> 5.81665
+125 -> 2.908325
+
+# CIFAR10 0.8
+500 -> 18.5 hrs
+375 -> 13.875
+250 -> 9.25
+125 -> 4.625
+
+# CIFAR100 0.5
+500 - 10.33hrs
+375 -> 7.747
+250 -> 5.165
+125 -> 2.5835
+
+# CIFAR100 0.8
+500 -> 17.5hrs
+375 -> 13.125
+250 -> 8.75
+125 -> 2.185
+
+# Supernet train times AF 
+# CIFAR10 0.5 
+500->5.5833   Search time = 6.05
+375->4.187475   Search time = 4.5375
+250->2.79165    Search time = 3.025
+125->1.3958    Search time = 1.512525
+
+# CIFAR10 0.8
+500 -> 5.6 Search time = 12.9 hrs
+375 -> 4.1999 Search time = 9.6751
+250 -> 2.8 Search Time = 6.45
+125 -> 1.4 Search Time = 3.225
+
+# CIFAR100 0.5
+500-> 5.3 Search Time = 5.03
+375-> 3.97499 Search time = 5.09699
+250-> 2.65 Search time = 2.515
+125 -> 0.6625 Search time = 1.920999
+
+# CIFAR 100 0.8
+500 -> 6.23 Search Time = 11.27
+375 -> 4.6725 Search Time = 8.4525
+250 -> 3.115 Search Time = 5.635
+125 -> 1.5575 Search Time = 0.6275

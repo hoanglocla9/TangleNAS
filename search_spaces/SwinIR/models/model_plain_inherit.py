@@ -24,7 +24,6 @@ class ModelPlain(ModelBase):
         self.opt_train = self.opt['train']  # training option
         self.netG = define_G(opt)
         self.params_penalty_w = self.opt_train["params_penalty"]
-        #self.netG.set_best_config(self.netG.tuple_to_arch((60, 3, 5, 4, 2, 4, 2, 4, 1, 6, 2, 6, 1, 4, 1, 4, 4, 2, 6, 1, 6, 1, 6, 2, 6, 1, 6, 1, 6, 4, 1, 4, 1, 6, 2, 4, 1, 4, 1, 4, 2, 4, 6, 1, 4, 2, 6, 1, 4, 1, 6, 2, 4, 1)))
         self.netG.set_best_config()
         self.netG = self.model_to_device(self.netG)
         if self.opt_train['E_decay'] > 0:

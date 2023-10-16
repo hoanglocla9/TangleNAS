@@ -164,6 +164,6 @@ class NASBench201Model(NetworkBase):
 
 # How to inherit and forward prop
 #model = NASBench201Inherit(16,5,4,10,NB201_SEARCH_SPACE,0,0)
-#model.load_state_dict(torch.load("."))
+#model.load_state_dict(torch.load("/work/dlclarge1/sukthank-transformer_search/GraViT-E/model_nb201.path"))
 #input = torch.randn([16,3,32,32])
 #print(model(input)[0].shape)

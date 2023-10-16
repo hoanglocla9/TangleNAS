@@ -190,16 +190,16 @@ def define_G(opt):
         config = opt_net["config"]
 
         netG = net(config,
-                    upscale=2,
-                    img_size=(64, 64),
-                    window_size=8,
-                    img_range=1.,
-                    depths=[6, 6, 6, 6],
-                    embed_dim=60,
-                    num_heads=[[6, 6, 6, 6, 6, 6] for i in range(4)],
-                    mlp_ratio=[[2, 2, 2, 2, 2, 2] for i in range(4)],
-                    upsampler='pixelshuffledirect',
-                    resi_connection='1conv')
+                   upscale=opt_net['upscale'],
+                   img_size=opt_net['img_size'],
+                   window_size=opt_net['window_size'],
+                   img_range=opt_net['img_range'],
+                   depths=opt_net['depths'],
+                   embed_dim=opt_net['embed_dim'],
+                   num_heads=[opt_net['num_heads'] for i in range(4)],
+                   mlp_ratio=[opt_net['mlp_ratio'] for i in range(4)],
+                   upsampler='pixelshuffledirect',
+                   resi_connection='1conv')
         pretrained_model = torch.load(opt_net["load_path"])
         print(pretrained_model.keys())
         #param_key_g = "params"

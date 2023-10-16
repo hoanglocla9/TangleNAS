@@ -184,7 +184,7 @@ class INatDataset(ImageFolder):
     # __getitem__ and __len__ inherited from ImageFolder
 
 
-def build_dataset(is_train, args, folder_name=None):
+def build_dataset(is_train, args, folder_name=None, data_path=None):
     transform = build_transform(is_train, args)
 
     if args.data_set == 'CIFAR10':
@@ -209,7 +209,12 @@ def build_dataset(is_train, args, folder_name=None):
         dataset = Flowers(args.data_path, train=is_train, transform=transform)
         nb_classes = 102
     elif args.data_set == 'IMNET':
-        root = os.path.join(args.data_path, 'train' if is_train else 'val')
+        if data_path == None:
+           root = os.path.join(args.data_path, 'train' if is_train else 'val')
+           #dataset = datasets.ImageFolder(root, transform=transform)
+           #nb_classes = 1000
+        else:
+           root = data_path
         dataset = datasets.ImageFolder(root, transform=transform)
         nb_classes = 1000
     elif args.data_set == 'EVO_IMNET':

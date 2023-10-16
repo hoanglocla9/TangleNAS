@@ -19,7 +19,7 @@ def main():
                         help='classical_sr, lightweight_sr, real_sr, '
                         'gray_dn, color_dn, jpeg_car')
     parser.add_argument(
-        '--scale', type=int, default=2,
+        '--scale', type=int, default=4,
         help='scale factor: 1, 2, 3, 4, 8')  # 1 for dn and jpeg car
     parser.add_argument('--noise',
                         type=int,
@@ -48,13 +48,13 @@ def main():
         '--folder_lq',
         type=str,
         default=
-        "testsets_swinir/Set14/LRbicx2", 
+        "/work/dlclarge2/sukthank-image_super_resolution/KAIR/testsets/Set5/LR_bicubic/X4",
         help='input low-quality test image folder')
     parser.add_argument(
         '--folder_gt',
         type=str,
         default=
-        "testsets_swinir/Set14/GTmod12",
+        "/work/dlclarge2/sukthank-image_super_resolution/KAIR/testsets/Set5/HR",
         help='input ground-truth test image folder')
     parser.add_argument(
         '--tile',
@@ -80,7 +80,7 @@ def main():
         open(args.model_path, 'wb').write(r.content)
 
     model = define_model(args)
-    config_best = model.config_best
+    config_best = model.get_best_config()
     model.eval()
     model = model.to(device)
 
@@ -115,7 +115,7 @@ def main():
                                2)[:, :, :h_old + h_pad, :]
             img_lq = torch.cat([img_lq, torch.flip(img_lq, [3])],
                                3)[:, :, :, :w_old + w_pad]
-            output = test(img_lq, model, args, window_size)
+            output = test(img_lq, model, args, window_size, config_best)
             output = output[..., :h_old * args.scale, :w_old * args.scale]
 
         # save image
@@ -195,16 +195,16 @@ def define_model(args):
     # 002 lightweight image sr
     # use 'pixelshuffledirect' to save parameters
     elif args.task == 'lightweight_sr':
-        '''config = {
+        config = {
             "embed_dim": [36, 48, 60],
             "mlp_ratio": [1, 2],
             "num_rstb": [2, 3, 4],
             "num_heads": [4, 6],
             "num_swin": [4, 5, 6]
-        }'''
-        config = {"embed_dim":[36,48,60],"mlp_ratio": [1,2],"num_rstb" : [2,3,4],"num_heads" : [4,6],"num_swin" : [4,5,6]}
+        }
+
         model = net(config,
-                    upscale=2,
+                    upscale=4,
                     img_size=(64, 64),
                     window_size=8,
                     img_range=1.,
@@ -215,7 +215,7 @@ def define_model(args):
                     upsampler='pixelshuffledirect',
                     resi_connection='1conv')
         param_key_g = 'params'
-        model.set_best_config(model.tuple_to_arch((60, 3, 5, 4, 2, 4, 2, 4, 1, 6, 2, 6, 1, 4, 1, 4, 4, 2, 6, 1, 6, 1, 6, 2, 6, 1, 6, 1, 6, 4, 1, 4, 1, 6, 2, 4, 1, 4, 1, 4, 2, 4, 6, 1, 4, 2, 6, 1, 4, 1, 6, 2, 4, 1)))
+
     # 003 real-world image sr
     elif args.task == 'real_sr':
         if not args.large_model:
@@ -296,15 +296,12 @@ def define_model(args):
     #pickle.load = functools.partial(pickle.load, encoding="latin1")
     #pickle.Unpickler = functools.partial(pickle.Unpickler, encoding="latin1")
     pretrained_model = torch.load(
-        "model_path"
+        "/work/dlclarge2/sukthank-naslib_one_shot/OneShotNASwithWE/superresolution/swinir_sr_lightweight_x4_drnas_with_prior_finetune_2/models/20460_G.pth"
     )
     #print(pretrained_model.keys())
     model.load_state_dict(pretrained_model[param_key_g] if param_key_g
                           in pretrained_model.keys() else pretrained_model,
                           strict=True)
-    model.set_best_config()
-    print(model.config_best)
-            
 
     return model
 
@@ -312,7 +309,7 @@ def define_model(args):
 def setup(args):
     # 001 classical image sr/ 002 lightweight image sr
     if args.task in ['classical_sr', 'lightweight_sr']:
-        save_dir = f'results_set14_spos/swinir_{args.task}_x{args.scale}'
+        save_dir = f'results/swinir_{args.task}_x{args.scale}'
         folder = args.folder_gt
         border = args.scale
         window_size = 8
@@ -384,10 +381,10 @@ def get_image_pair(args, path):
     return imgname, img_lq, img_gt
 
 
-def test(img_lq, model, args, window_size):
+def test(img_lq, model, args, window_size, config_best):
     if args.tile is None:
         # test the image as a whole
-        output = model(img_lq)
+        output = model(img_lq, config_best)
     else:
         # test the image tile by tile
         b, c, h, w = img_lq.size()

@@ -1019,17 +1019,6 @@ class SwinIR(nn.Module):
     def no_weight_decay(self):
         return {'absolute_pos_embed'}
 
-    def tuple_to_arch(self, arch_tuple):
-        sampled_config = self.sample_random_config()
-        #print(sampled_config)
-        dimensions = list(sampled_config.keys())
-        config_new = {}
-        i = 0
-        for dimension in dimensions:
-            config_new[dimension] = arch_tuple[i]
-            i = i+1
-        return config_new
-
     @torch.jit.ignore
     def no_weight_decay_keywords(self):
         return {'relative_position_bias_table'}
@@ -1080,24 +1069,23 @@ class SwinIR(nn.Module):
     def set_config(self, config):
         self.config_best = config     
 
-    def set_best_config(self, config=None):
-        if config is None:
-            config = {}
-            config["embed_dim"] = self.config["embed_dim"][torch.argmax(
+    def set_best_config(self):
+        config = {}
+        config["embed_dim"] = self.config["embed_dim"][torch.argmax(
             self.alphas_embed_dim, dim=-1)]
-            config["num_rstb"] = self.config["num_rstb"][torch.argmax(
+        config["num_rstb"] = self.config["num_rstb"][torch.argmax(
             self.alphas_num_rstb, dim=-1)]
-            for d in range(4):
-                #print("Block",d+1)
-                #print("Number of Swins",self.config["num_swin"][torch.argmax(self.alphas_num_swin[d],dim=-1)])
-                config["num_swin_" +
+        for d in range(4):
+            #print("Block",d+1)
+            #print("Number of Swins",self.config["num_swin"][torch.argmax(self.alphas_num_swin[d],dim=-1)])
+            config["num_swin_" +
                    str(d)] = self.config["num_swin"][torch.argmax(
                        self.alphas_num_swin[d], dim=-1)]
-                for i in range(6):
-                    config["num_heads_" + str(d) + "_" +
+            for i in range(6):
+                config["num_heads_" + str(d) + "_" +
                        str(i)] = self.config["num_heads"][torch.argmax(
                            self.alphas_num_heads[d][i], dim=-1)]
-                    config["mlp_ratio_" + str(d) + "_" +
+                config["mlp_ratio_" + str(d) + "_" +
                        str(i)] = self.config["mlp_ratio"][torch.argmax(
                            self.alphas_mlp_ratio[d][i], dim=-1)]
         self.config_best = config
@@ -1182,7 +1170,7 @@ class SwinIR(nn.Module):
         ]
 
 
-'''if __name__ == '__main__':
+if __name__ == '__main__':
     upscale = 4
     window_size = 8
     height = (1024 // upscale // window_size + 1) * window_size
@@ -1211,4 +1199,4 @@ class SwinIR(nn.Module):
         print(model.config_best)
         x = torch.randn((2, 3, height, width))
         x = model(x)
-        print(x.shape)'''
+        print(x.shape)

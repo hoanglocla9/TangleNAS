@@ -6,16 +6,19 @@ import numpy as np
 
 class BaseArchitect(ABC):
 
-    def __init__(self, model, config, reg_scale=None):
+    def __init__(self, model, config, reg_scale=None, grad_weights=None):
         self.network_momentum = config.momentum
         self.network_weight_decay = config.weight_decay
-        self.model = model
         self.arch_weight_decay = config.arch_weight_decay
+        self.model = model
         if reg_scale != None:
             self.arch_weight_decay = reg_scale
         self.lr = config.arch_learning_rate
-
-        self.optimizer = torch.optim.Adam(self.model.arch_parameters(),
+        if grad_weights is not None:
+            self.grad_weights = grad_weights.unsqueeze(-1)
+        else:
+            self.grad_weights = None
+        self.optimizer = torch.optim.Adam(model.arch_parameters(),
                                           lr=self.lr,
                                           betas=(0.5, 0.999),
                                           weight_decay=self.arch_weight_decay)
@@ -30,9 +33,13 @@ class BaseArchitect(ABC):
 
 class ArchitectV1(BaseArchitect):
 
-    def __init__(self, model, config, use_kl_loss=False, reg_scale=None):
-        super().__init__(model=model, config=config, reg_scale=reg_scale)
+    def __init__(self, model, config, use_kl_loss=False, reg_scale=None, grad_weights=None):
+        super().__init__(model=model, config=config, reg_scale=reg_scale, grad_weights=grad_weights)
         self.use_kl_loss = use_kl_loss
+        if grad_weights is not None:
+            self.grad_weights = grad_weights.unsqueeze(-1)
+        else:
+            self.grad_weights = None
 
     def step(self, input_train, target_train, input_valid, target_valid, eta,
              network_optimizer):
@@ -48,13 +55,28 @@ class ArchitectV1(BaseArchitect):
             loss += self.model._get_kl_reg()
 
         loss.backward()
+        #for n,p in self.model.named_parameters():
+        #    if p.grad is None:
+        #        print(n)
+        for n,p in self.model.named_parameters():
+            if p.grad==None:
+                print(n)
+        i = 0
+        if self.grad_weights is not None:
+            for p in self.model.arch_parameters():
+                p.grad.data.mul_(self.grad_weights[i])
+                i += 1
+        for p in self.model.arch_parameters():
+            if p.grad is None:
+                print("Something is wrong!")
+            
         return loss, logits
 
 
 class ArchitectV2(BaseArchitect):
 
-    def __init__(self, model, config):
-        super().__init__(model=model, config=config)
+    def __init__(self, model, config, use_kl_loss=False, reg_scale=None, grad_weights=None):
+        super().__init__(model=model, config=config, grad_weights=grad_weights)
 
     def step(self, input_train, target_train, input_valid, target_valid, eta,
              network_optimizer):
@@ -62,6 +84,14 @@ class ArchitectV2(BaseArchitect):
         loss, logits = self._backward_step_unrolled(input_train, target_train,
                                                     input_valid, target_valid,
                                                     eta, network_optimizer)
+        i = 0
+        if self.grad_weights is not None:
+          for p in self.model.arch_parameters():
+            if p.grad is None:
+                print("Something is wrong!")
+            else:
+                p.grad.data.mul_(self.grad_weights[i])
+            i = i+1
 
         self.optimizer.step()
         return loss, logits
@@ -79,7 +109,6 @@ class ArchitectV2(BaseArchitect):
         unrolled_loss, logits = unrolled_model._loss(input_valid, target_valid)
 
         unrolled_loss.backward()
-
         dalpha = [v.grad for v in unrolled_model.arch_parameters()]
         vector = [v.grad.data for v in unrolled_model.get_weights()]
         implicit_grads = self._hessian_vector_product(vector, input_train,
@@ -109,6 +138,7 @@ class ArchitectV2(BaseArchitect):
                                       self.network_momentum)
         except BaseException:
             moment = torch.zeros_like(theta)
+        #loss.backward()
 
         dtheta = self._concat(
             torch.autograd.grad(
@@ -159,8 +189,8 @@ class ArchitectV2(BaseArchitect):
 
 class DummyArchitect(BaseArchitect):
 
-    def __init__(self, model, config):
-        super().__init__(model=model, config=config)
+    def __init__(self, model, config, use_kl_loss=False, reg_scale=None, grad_weights=None):
+        super().__init__(model=model, config=config, grad_weights=grad_weights)
 
     def step(self, input_train, target_train, input_valid, target_valid, eta,
              network_optimizer):

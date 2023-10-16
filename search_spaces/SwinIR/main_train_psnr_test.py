@@ -244,7 +244,7 @@ def main(json_path='options/train_msrresnet_psnr.json'):
     tau_curr = torch.Tensor([opt["netG"]["tau_max"]])
     prev_psnr = 0
     param_dict = torch.load(
-        "model.pth"
+        "/work/dlclarge2/sukthank-naslib_one_shot/OneShotNASwithWE/SwinIRWE/models/002_lightweightSR_DIV2K_s64w8_SwinIR-S_x4.pth"
     )["params"]
     temp_dict = {}
     for k in param_dict.keys():

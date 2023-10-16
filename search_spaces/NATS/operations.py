@@ -5,8 +5,9 @@ from turtle import forward
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-__all__ = ["OPS", "RAW_OP_CLASSES", "ResNetBasicblock", "SearchSpaceNames"]
+import itertools
+import numpy as np
+__all__ = ["OPS", "RAW_OP_CLASSES", "ResNetBasicblock", "SearchSpaceNames", "OPS_mix"]
 OPS_sub = {
     "none":
     lambda C_in, C_out, stride: Zero(C_in, C_out, stride),
@@ -35,6 +36,34 @@ OPS_sub = {
     if stride == 1 and C_in == C_out else FactorizedReduceSubSample(
         C_in, C_out, C_max),
 }
+
+OPS_mix = {
+    "none":
+    lambda C_in, C_out, stride: Zero(C_in, C_out, stride),
+    "avg_pool_3x3":
+    lambda C_in, C_out, C_max, stride: POOLINGSub(C_in, C_out, C_max),
+    "nor_conv_3x3_p1":
+    lambda C_in, C_out, C_max, stride: ReLUConvBNSubP1(C_in, C_max),
+    "nor_conv_3x3_p2":
+    lambda C_in, C_out, C_max, stride: ReLUConvBNSubP2(C_out, C_max),
+    "nor_conv_1x1_p1":
+    lambda C_in, C_out, C_max, stride: ReLUConvBNSubP1(C_in, C_max),
+    "nor_conv_1x1_p2":
+    lambda C_in, C_out, C_max, stride: ReLUConvBNSubP2(C_out, C_max),
+    "nor_conv_3x3":
+    lambda op, channels_list: ReLUConvBNMixture(op, channels_list),
+    "nor_conv_1x1":
+    lambda op, channels_list: ReLUConvBNMixture(op, channels_list),
+    "skip_connect_base":
+    lambda C_in, C_out, C_max, stride: IdentityMasked(C_in),
+    "skip_connect_p1":
+    lambda C_in, C_out, C_max, stride: FactorizedReduceSubP1(C_in, C_max),
+    "skip_connect_p2":
+    lambda C_in, C_out, C_max, stride: FactorizedReduceSubP2(C_in, C_max),
+    "skip_connect":
+    lambda op, channels_list: FactorizedReduceMixture(op,channels_list),
+}
+
 OPS = {
     "none":
     lambda C_in, C_out, stride, affine, track_running_stats: Zero(
@@ -150,6 +179,96 @@ SearchSpaceNames = {
 }
 
 
+class FactorizedReduceMixture(nn.Module):
+
+    def __init__(self, op, channels_list):
+        super(FactorizedReduceMixture, self).__init__()
+        self.op = op
+        self.channels_list = channels_list
+        self.max_channel = max(self.channels_list)
+        self.channels_list_cross = list(itertools.product(channels_list, channels_list))
+        self._delete_channel_pairs()
+        self.bn = BatchNormMixture(self.channels_list, self.max_channel)
+
+    def _delete_channel_pairs(self):
+        indices = [0,9,18,27,36,45,54,63]
+        for index in sorted(indices, reverse=True):
+            del self.channels_list_cross[index]
+
+    def _compute_weight_and_bias_combi(self, weights, idx, conv_weight, conv_bias, op_weight, op_bias):
+        alpha = weights[idx]
+
+        channel_size_in, channel_size_out = self.channels_list_cross[idx]
+        weight_curr = op_weight[:channel_size_out, :channel_size_in, :, :]
+        conv_weight += alpha * F.pad(weight_curr, (0,0,0,0,0,self.max_channel-channel_size_in,0,self.max_channel-channel_size_out), "constant", 0)
+
+        if op_bias is not None:
+            bias = alpha * op_bias[:channel_size_out]
+            conv_bias += F.pad(bias,(0,self.max_channel-channel_size_out),"constant",0)
+        else:
+            conv_bias = op_bias
+        return conv_weight, conv_bias
+
+    def compute_weight_and_bias_mixture_combi(self, weights, op_weight, op_bias, use_argmax=False):
+        conv_weight = 0
+        conv_bias = 0
+        if use_argmax == True:
+            argmax = np.array([w.item() for w in weights]).argmax()
+            conv_weight, conv_bias = self._compute_weight_and_bias_combi(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                op_weight=op_weight,
+                op_bias=op_bias
+            )
+        else:
+            for i, _ in enumerate(weights):
+                conv_weight, conv_bias = self._compute_weight_and_bias_combi(
+                    weights=weights,
+                    idx=i,
+                    conv_weight=conv_weight,
+                    conv_bias=conv_bias,
+                    op_weight=op_weight,
+                    op_bias=op_bias
+                )
+        return conv_weight, conv_bias
+
+    def forward(self, x, weights, use_argmax=False):
+        if self.op.stride == 2:
+            x = self.op.relu(x)
+            y = self.op.pad(x)
+            conv_weight_0, conv_bias_0 = self.compute_weight_and_bias_mixture_combi(weights,self.op.conv[0].weight, self.op.convs[0].bias, use_argmax=use_argmax)
+            conv_weight_1, conv_bias_1 = self.compute_weight_and_bias_mixture_combi(weights,self.op.conv[1].weight, self.op.convs[1].bias, use_argmax=use_argmax)
+            out = torch.cat([
+                torch.nn.functional.conv2d(
+                    x,
+                    weight=conv_weight_0,
+                    bias=conv_bias_0,
+                    stride=self.op.convs[0].stride,
+                    padding=self.op.convs[0].padding),
+                torch.nn.functional.conv2d(
+                    y[:, :, 1:, 1:],
+                    weight=conv_weight_1,
+                    bias=conv_bias_1,
+                    stride=self.op.convs[1].stride,
+                    padding=self.op.convs[1].padding)
+            ],
+                            dim=1)
+        else:
+            conv_weight, conv_bias = self.compute_weight_and_bias_mixture_combi(weights, self.op.conv.weight, self.op.conv.bias, use_argmax=use_argmax)
+            #print(x.shape)
+            #print(op.conv.weight[:self.C_out, :self.C_in, :, :].shape)
+            out = torch.nn.functional.conv2d(
+                x,
+                weight=conv_weight,
+                bias=conv_bias,
+                stride=self.op.conv.stride,
+                groups=self.op.conv.groups,
+                padding=self.op.conv.padding)
+        out = self.bn(out,weights,self.op.bn,use_argmax=use_argmax)
+        return out
+
 class FactorizedReduceSubSample(nn.Module):
 
     def __init__(self, C_in, C_out, C_max):
@@ -210,6 +329,138 @@ class FactorizedReduceSub(nn.Module):
         out = self.part2(out1, out2, op)
         return out
 
+class ResNetBasicblockMixture(nn.Module):
+
+    def __init__(self, op, channels_list):
+        super(ResNetBasicblockMixture, self).__init__()
+        self.op = op
+        self.channels_list = channels_list
+        self.channels_max = max(self.channels_list)
+        self.channels_list_cross = list(itertools.product(channels_list, channels_list))
+        self.bn = BatchNormMixture(self.channels_list_cross,self.channels_max)
+
+    def _compute_weight_and_bias(self, weights, idx, conv_weight, conv_bias, op_weight, op_bias):
+        alpha = weights[idx]
+
+        channel_size = self.channels_list[idx]
+        start = 0 
+        end = start + channel_size
+        weight_curr = op_weight[:, start:end, :, :]
+        conv_weight += alpha * F.pad(weight_curr, (0,0,0,0,self.channels_max-channel_size), "constant", 0)
+
+        if op_bias is not None:
+            bias = alpha * op_bias[:channel_size]
+            conv_bias += F.pad(bias,(self.channels_max-channel_size),"constant",0)
+
+        return conv_weight, conv_bias
+
+    def _compute_weight_and_bias_combi(self, weights, idx, conv_weight, conv_bias, op_weight, op_bias):
+        alpha = weights[idx]
+
+        channel_size_in, channel_size_out = self.channels_list_cross[idx]
+        weight_curr = op_weight[:channel_size_out, :channel_size_in, :, :]
+        conv_weight += alpha * F.pad(weight_curr, (0,0,0,0,0,self.channels_max-channel_size_in,0,self.channels_max-channel_size_out), "constant", 0)
+        if op_bias is not None:
+            bias = alpha * op_bias[:channel_size_out]
+            conv_bias += F.pad(bias,(self.channels_max-channel_size_out),"constant",0)
+
+        return conv_weight, conv_bias
+
+    def compute_weight_and_bias_mixture(self, weights, op_weight, op_bias, use_argmax=False):
+        conv_weight = 0
+        conv_bias = 0
+        if use_argmax == True:
+            argmax = np.array([w.item() for w in weights]).argmax()
+            conv_weight, conv_bias = self._compute_weight_and_bias(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                op_weight=op_weight,
+                op_bias=op_bias
+            )
+        else:
+            for i, _ in enumerate(weights):
+                conv_weight, conv_bias = self._compute_weight_and_bias(
+                    weights=weights,
+                    idx=i,
+                    conv_weight=conv_weight,
+                    conv_bias=conv_bias,
+                    op_weight=op_weight,
+                    op_bias=op_bias
+                )
+        if op_bias is None:
+            conv_bias=op_bias
+        return conv_weight, conv_bias
+
+    def compute_weight_and_bias_mixture_combi(self, weights, op_weight, op_bias, use_argmax=False):
+        conv_weight = 0
+        conv_bias = 0
+        if use_argmax == True:
+            argmax = np.array([w.item() for w in weights]).argmax()
+            conv_weight, conv_bias = self._compute_weight_and_bias_combi(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                op_weight=op_weight,
+                op_bias=op_bias
+            )
+        else:
+            for i, _ in enumerate(weights):
+                conv_weight, conv_bias = self._compute_weight_and_bias_combi(
+                    weights=weights,
+                    idx=i,
+                    conv_weight=conv_weight,
+                    conv_bias=conv_bias,
+                    op_weight=op_weight,
+                    op_bias=op_bias
+                )
+        if op_bias is None:
+            conv_bias=op_bias
+        return conv_weight, conv_bias
+
+    def forward(self, x, weights, use_argmax=False):
+        #relu
+        inputs  = self.op.conv_a.op[0](x)
+        #conv
+        weight_a, bias_a = self.compute_weight_and_bias_mixture_combi(weights, self.op.conv_a.op[1].weight, self.op.conv_a.op[1].bias, use_argmax=use_argmax)
+        inputs = torch.nn.functional.conv2d(
+                inputs,
+                weight=weight_a,
+                bias=bias_a,
+                stride=self.op.conv_a.op[1].stride,
+                groups=self.op.conv_a.op[1].groups,
+                padding=self.op.conv_a.op[1].padding)
+        #bn
+        inputs = self.bn(inputs, weights, self.op.conv_a.op[2], use_argmax= use_argmax)
+        #relu
+        inputs  = self.op.conv_b.op[0](inputs)
+        #conv
+        weight_b, bias_b = self.compute_weight_and_bias_mixture_combi(weights, self.op.conv_b.op[1].weight, self.op.conv_b.op[1].bias, use_argmax=use_argmax)
+        inputs = torch.nn.functional.conv2d(
+                inputs,
+                weight=weight_b,
+                bias=bias_b,
+                stride=self.op.conv_b.op[1].stride,
+                groups=self.op.conv_b.op[1].groups,
+                padding=self.op.conv_b.op[1].padding)
+        #bn
+        inputs = self.bn(inputs, weights, self.op.conv_b.op[2], use_argmax= use_argmax)
+        if self.op.downsample is not None:
+            residual = self.op.downsample[0](x)
+            weight_downsample, bias_downsample = self.compute_weight_and_bias_mixture_combi(weights, self.op.downsample[1].weight, self.op.downsample[1].bias, use_argmax=use_argmax)
+            residual = torch.nn.functional.conv2d(
+                residual,
+                weight=weight_downsample,
+                bias=bias_downsample,
+                stride=self.op.downsample[1].stride,
+                groups=self.op.downsample[1].groups,
+                padding=self.op.downsample[1].padding)
+        else:
+            residual = x
+        x = residual + inputs
+        return x
 
 class ResNetBasicblockSub(nn.Module):
 
@@ -244,7 +495,71 @@ class ResNetBasicblockSub(nn.Module):
                       "constant", 0)
         return x
 
+class BatchNormMixture(torch.nn.Module):
 
+    def __init__(self, channels_list, max_channels):
+        super().__init__()
+        self.channels_list = channels_list
+        self.max_channels = max_channels
+
+    def compute_bn_mixture(self, weights, op, use_argmax=False):
+        bn_weight = 0
+        if op.weight is not None:
+            if use_argmax:
+                argmax = np.array([w.item() for w in weights]).argmax()
+                bn_weight += F.pad(weights[argmax]*op.weight[:self.channels_list[argmax][-1]],(0,self.max_channels-self.channels_list[argmax][-1]),"constant", 0)
+            else:
+                for i,w in enumerate(weights):
+                    bn_weight += F.pad(w*op.weight[:self.channels_list[i][-1]],(0,self.max_channels-self.channels_list[i][-1]),"constant", 0)
+        else:
+            bn_weight= op.weight
+
+        bn_bias = 0
+        if op.bias is not None:
+            if use_argmax:
+                argmax = np.array([w.item() for w in weights]).argmax()
+                bn_bias += F.pad(weights[argmax]*op.bias[:self.channels_list[argmax][-1]],(0,self.max_channels-self.channels_list[argmax][-1]),"constant", 0)
+            else:
+                for i,w in enumerate(weights):
+                    bn_bias += F.pad(w*op.bias[:self.channels_list[i][-1]],(0,self.max_channels-self.channels_list[i][-1]),"constant", 0)
+        else:
+            bn_bias= op.bias
+        return bn_bias, bn_weight        
+
+    def forward(self, x, weights, bn, use_argmax = False):
+        if bn.training:
+            bn_training = True
+        else:
+            bn_training = (bn.running_mean is None) and (bn.running_var is
+                                                         None)
+        if bn.momentum is None:
+            exponential_average_factor = 0.0
+        else:
+            exponential_average_factor = bn.momentum
+
+        if bn.training and bn.track_running_stats:
+            assert bn.num_batches_tracked is not None
+            bn.num_batches_tracked.add_(1)
+            if bn.momentum is None:  # use cumulative moving average
+                exponential_average_factor = 1.0 / bn.num_batches_tracked.item(
+                )
+            else:  # use exponential moving average
+                exponential_average_factor = bn.momentum
+        bn_weight, bn_bias = self.compute_bn_mixture(weights, bn, use_argmax=use_argmax)
+        x = F.batch_norm(
+            x,
+            # If buffers are not to be tracked,ensure that they won't be updated
+            bn.running_mean 
+            if not bn.training or bn.track_running_stats else None,
+            bn.running_var
+            if not bn.training or bn.track_running_stats else None,
+            bn_weight if bn_weight is not None else bn_weight,
+            bn_bias if bn_bias is not None else bn_bias,
+            bn_training,
+            exponential_average_factor,
+            bn.eps,
+        )
+        return x
 class BatchNormSampled(torch.nn.Module):
 
     def __init__(self, channel, max_channels):
@@ -474,6 +789,69 @@ class ResNetBasicblockSubP1(nn.Module):
         return inputs, residual
 
 
+class ReLUConvBNMixture(nn.Module):
+
+    def __init__(self, op, channels_list):
+        super(ReLUConvBNMixture, self).__init__()
+        self.op = op
+        self.channels_list = channels_list
+        self.channels_max = max(self.channels_list)
+        self.channels_list_cross = list(itertools.product(channels_list, channels_list))
+        self.bn = BatchNormMixture(self.channels_list_cross,self.channels_max)
+
+    def _compute_weight_and_bias_combi(self, weights, idx, conv_weight, conv_bias, op_weight, op_bias):
+        alpha = weights[idx]
+
+        channel_size_in, channel_size_out = self.channels_list_cross[idx]
+        weight_curr = op_weight[:channel_size_out, :channel_size_in, :, :]
+        conv_weight += alpha * F.pad(weight_curr, (0,0,0,0,0,self.channels_max-channel_size_in,0,self.channels_max-channel_size_out), "constant", 0)
+
+        if op_bias is not None:
+            bias = alpha * op_bias[:channel_size_out]
+            conv_bias += F.pad(bias,(0,self.channels_max-channel_size_out),"constant",0)
+
+        return conv_weight, conv_bias
+
+    def compute_weight_and_bias_mixture_combi(self, weights, op_weight, op_bias, use_argmax=False):
+        conv_weight = 0
+        conv_bias = 0
+        if use_argmax == True:
+            argmax = np.array([w.item() for w in weights]).argmax()
+            conv_weight, conv_bias = self._compute_weight_and_bias_combi(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                op_weight=op_weight,
+                op_bias=op_bias
+            )
+        else:
+            for i, _ in enumerate(weights):
+                conv_weight, conv_bias = self._compute_weight_and_bias_combi(
+                    weights=weights,
+                    idx=i,
+                    conv_weight=conv_weight,
+                    conv_bias=conv_bias,
+                    op_weight=op_weight,
+                    op_bias=op_bias
+                )
+        if op_bias is None:
+            conv_bias = op_bias
+        return conv_weight, conv_bias
+
+    def forward(self, x, weights, use_argmax=False):
+        shape = x.shape
+        x = self.op.op[0](x)
+        conv_weights, conv_bias = self.compute_weight_and_bias_mixture_combi(weights, self.op.op[1].weight, self.op.op[1].bias, use_argmax=use_argmax)
+        x = torch.nn.functional.conv2d(
+            x,
+            weight=conv_weights,
+            bias=conv_bias,
+            stride=self.op.op[1].stride,
+            padding=self.op.op[1].padding)
+        x = self.bn(x, weights, self.op.op[2], use_argmax= use_argmax)
+        return x
+
 class ReLUConvBNSub(nn.Module):
 
     def __init__(self, C_in, C_out, C_max):
@@ -651,7 +1029,7 @@ class Identity(nn.Module):
     def __init__(self):
         super(Identity, self).__init__()
 
-    def forward(self, x):
+    def forward(self, x, dummy):
         return x
 
 

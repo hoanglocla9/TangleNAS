@@ -16,7 +16,7 @@ from search_spaces.DARTS.model import NetworkCIFAR
 import search_spaces.DARTS.genotypes as genotypes
 import torch
 import torch.backends.cudnn as cudnn
-from train.train  import Trainer
+from train  import Trainer
 
 
 class SearchSpace(Enum):
@@ -148,34 +148,22 @@ class Experiment:
                 search_space=NB201_SEARCH_SPACE,
                 affine=config.affine,
                 track_running_stats=config.track_running_stats)
-            self.drop_path_prob = 0
         elif self.search_space == SearchSpace.DARTS:
             #C, num_classes, layers, auxiliary, genotype,
             # For darts no alg performs search on full fidelity hence train from scratch alsways
             model = NetworkCIFAR(config.channel, num_classes=self.num_classes, layers=config.layers, auxiliary=config.auxillary,  genotype=eval("genotypes.%s" % self.genotype), auxiliary_weight=config.auxiliary_weight)
-            self.drop_path_prob = config.drop_path_prob
         elif self.search_space in [SearchSpace.NATS_V1, SearchSpace.NATS_V2]:
             genotype = CellStructure.str2structure(
                 '|nor_conv_3x3~0|+|nor_conv_3x3~0|nor_conv_3x3~1|+|skip_connect~0|nor_conv_3x3~1|nor_conv_3x3~2|'
             )
             model = NATSModel(genotype=genotype, num_classes=self.num_classes, affine=config.affine, track_running_stats=config.track_running_stats)
-            self.drop_path_prob = 0
         else:
             raise Exception(f'Unknown search space {self.search_space}')
-        last_info = torch.load(model_path)
+
         if self.finetune:
-            
-            print(last_info.keys())
-            #checkpoint = torch.load(last_info["last_checkpoint"])
-            model.load_state_dict(last_info["search_model"],strict=False)
-        else:
-            ckpt = last_info["search_model"]
-            new_dict = {}
-            for k in ckpt.keys():
-                if "arch" in k or "alpha" in k:
-                    new_dict[k] = ckpt[k]
-            print(new_dict)
-            model.load_state_dict(new_dict,strict=False)
+            last_info = torch.load(model_path)
+            checkpoint = torch.load(last_info["last_checkpoint"])
+            model.load_state_dict(checkpoint["search_model"])
         return model
 
     def get_config(self):
@@ -219,7 +207,7 @@ class Experiment:
                           batch_size=config.batch_size,
                           use_data_parallel=config.use_data_parallel,
                           print_freq=self.print_freq,
-                          drop_path_prob=self.drop_path_prob,
+                          drop_path_prob=config.drop_path_prob,
                           load_saved_model=self.load_saved_model)
 
         trainer.train(config.epochs)
@@ -231,7 +219,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         'Fine tuning and training searched architectures', add_help=False)
     parser.add_argument('--searchspace',
-                        default='nb201',
+                        default='darts',
                         help='search space in (darts, nb201, nats)',
                         type=str)
     parser.add_argument('--one_shot_opt',
@@ -246,7 +234,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--model_path',
         default=
-        ".",
+        "/work/dlclarge1/sukthank-transformer_search/GraViT-E/configs/OneShotNASwithWE/test_bugfix/darts_drnas_cifar10_555/seed-555-last-info.pth",
         type=str)
     parser.add_argument('--load_saved_model', action='store_true', default=False, help='Load the saved models before training them')
     args = parser.parse_args()

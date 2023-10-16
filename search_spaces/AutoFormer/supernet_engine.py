@@ -38,11 +38,12 @@ def train_one_epoch(tau_curr,
                     model: torch.nn.Module,
                     criterion: torch.nn.Module,
                     data_loader_train: Iterable,
-                    data_loader_val: Iterable,
+                    data_loader_val,
                     optimizer: torch.optim.Optimizer,
                     device: torch.device,
                     epoch: int,
                     loss_scaler,
+                    arch_loss_scaler,
                     max_norm: float = 0,
                     mixup_fn: Optional[Mixup] = None,
                     amp: bool = True,
@@ -64,9 +65,13 @@ def train_one_epoch(tau_curr,
             model.module._arch_parameters, tau_curr)
     else:
         arch_params_sampled = None
-    for samples, targets in metric_logger.log_every(data_loader_train,
-                                                    print_freq, header):
-        samples_search, targets_search = next(iter(data_loader_val))
+
+    for batch_1,batch_2 in metric_logger.log_every(data_loader_train,print_freq, header):
+        samples, targets = batch_1
+        samples_search, targets_search = batch_2
+        
+
+        #samples_search, targets_search = samples, targets
         samples_search = samples_search.to(device, non_blocking=True)
         targets_search = targets_search.to(device, non_blocking=True)
         samples = samples.to(device, non_blocking=True)
@@ -87,8 +92,6 @@ def train_one_epoch(tau_curr,
                            get_lr(optimizer),
                            optimizer,
                            unrolled=args.unrolled)
-        del samples_search
-        del targets_search
         if amp:
             with torch.cuda.amp.autocast():
                 if teacher_model:
@@ -107,9 +110,14 @@ def train_one_epoch(tau_curr,
                                     arch_params_sampled=arch_params_sampled)
                     loss = criterion(outputs, targets)
         else:
+            #torch.cuda.synchronize()
+            #start = time.time()
             outputs = model(samples,
                             tau_curr,
                             arch_params_sampled=arch_params_sampled)
+            #torch.cuda.synchronize()
+            #end = time.time()
+            #print("total time weights", start-end)
             if teacher_model:
                 with torch.no_grad():
                     teach_output = teacher_model(samples)
@@ -134,19 +142,19 @@ def train_one_epoch(tau_curr,
             loss_scaler(loss,
                         optimizer,
                         clip_grad=max_norm,
-                        parameters=model.parameters(),
+                        parameters=model.module.get_network_parameters(),
                         create_graph=is_second_order)
         else:
             loss.backward()
-            for name, param in model.named_parameters():
-                if param.grad is None:
-                    print(name)
+            #for n,p in model.named_parameters():
+            #    if p.grad is None:
+            #        print("I dont have a grad", n)
             optimizer.step()
 
         torch.cuda.synchronize()
-
         metric_logger.update(loss=loss_value)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        #break
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -195,5 +203,7 @@ def evaluate(tau_curr, data_loader, model, device, amp=True):
         .format(top1=metric_logger.acc1,
                 top5=metric_logger.acc5,
                 losses=metric_logger.loss))
-
+    print("Arch params sampled: ")
+    for p in model.module._arch_parameters:
+        print(torch.nn.functional.softmax(p,dim=-1))
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}

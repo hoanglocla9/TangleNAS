@@ -241,6 +241,25 @@ def main(json_path='options/train_msrresnet_psnr.json'):
     # ----------------------------------------
     '''
     tau_curr = torch.Tensor([opt["netG"]["tau_max"]])
+    param_dict = torch.load(
+        "/work/dlclarge2/sukthank-naslib_one_shot/OneShotNASwithWE/SwinIRWE/models/002_lightweightSR_DIV2K_s64w8_SwinIR-S_x4.pth"
+    )["params"]
+    temp_dict = {}
+    for k in param_dict.keys():
+        if k == "upsample.0.weight":
+            temp_dict["upsample.conv_pre.weight"] = param_dict[k]
+            #del param_dict[k]
+        elif k == "upsample.0.bias":
+            temp_dict["upsample.conv_pre.bias"] = param_dict[k]
+            #del param_dict[k]
+        else:
+            temp_dict["module." + k] = param_dict[k]
+    param_dict["upsample.conv_pre.weight"] = temp_dict[
+        "upsample.conv_pre.weight"]
+    param_dict["upsample.conv_pre.bias"] = temp_dict["upsample.conv_pre.bias"]
+    del param_dict["upsample.0.weight"]
+    del param_dict["upsample.0.bias"]
+    model.netG.load_state_dict(temp_dict, strict=False)
     tau_step = (opt["netG"]["tau_min"] - opt["netG"]["tau_max"]) / 1000
     for epoch in range(1000000):  # keep running
         if opt['dist']:
