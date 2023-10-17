@@ -150,11 +150,6 @@ class DistributedRunManager:
         self.optimizer = self.run_config.build_optimizer(net_params)
         self.architect = architect
         self.load_model()
-        #self.load_model("/work/dlclarge2/sukthank-tanglenas/merge_with_main/TangleNAS-dev/search_spaces/MobileNetV3/mobilenetv3_drnas_alternating_9001__e171.pth.tar",map_location="cpu")
-        #self.optimizer = DistributedOptimizer(
-        #    optim=self.optimizer,
-        #    params_rref=self.net.named_parameters()
-        #)
 
     """ save path and log path """
 

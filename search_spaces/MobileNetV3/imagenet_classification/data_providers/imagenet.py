@@ -26,7 +26,7 @@ class ConcatDataset(torch.utils.data.Dataset):
         return max(len(d) for d in self.datasets)
 
 class ImagenetDataProvider(DataProvider):
-    DEFAULT_PATH = "/gpfs/bwfor/work/ws/fr_rs1131-tanglenas/imagenet"
+    DEFAULT_PATH = "/path/to/imagenet"
 
     def __init__(
         self,
