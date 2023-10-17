@@ -60,7 +60,7 @@ class CausalSelfAttention(nn.Module):
         self.T = config["block_size"]
         self.C = self.max_embed_dim
         self.mixop = mixop
-        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
+        self.flash = False #hasattr(torch.nn.functional, 'scaled_dot_product_attention')
         if not self.flash:
             print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
             # causal mask to ensure that attention is only applied to the left in the input sequence
@@ -79,8 +79,8 @@ class CausalSelfAttention(nn.Module):
         self.c_proj_mix_op_list = self.get_entangle_ops(self.c_proj_mix_op, self.embed_dim_list, "c_proj_msa")
         self.attn_dropout = nn.Dropout(self.dropout)
         self.resid_dropout = nn.Dropout(self.dropout)
-        self.attention_op = MixedAttnEmbd(self.embed_dim_list, self.dropout, self.B, self.T, self.C, self.attn_dropout, self.flash, self.bias, self.max_n_head)
-        self.attention_op_list = self.get_entangle_ops(self.attention_op, self.embed_dim_list, "attention_op")
+        self.attention_op = MixedAttnHeadEmbed(self.n_head_list, self.embed_dim_list, self.dropout, self.B, self.T, self.C, self.attn_dropout, self.flash, self.bias)
+        self.attention_op_list = self.get_entangle_ops_combi(self.attention_op, self.n_head_list, self.embed_dim_list, "attention_op")
         
    
     def get_entangle_ops(self, op, choices, op_name):
@@ -95,7 +95,7 @@ class CausalSelfAttention(nn.Module):
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         out  = self.mixop.forward(x, arch_params["embed_dim"], self.c_attn_op_list)
-        y = self.mixop.forward(out, arch_params["embed_dim"], self.attention_op_list)
+        y = self.mixop.forward(out, [arch_params["num_heads"][i],arch_params["embed_dim"]], self.attention_op_list, combi=True)
         y = self.mixop.forward(y, arch_params["embed_dim"], self.c_proj_mix_op_list)
         y = self.resid_dropout(y)
         return y
@@ -527,15 +527,12 @@ class GPT(nn.Module):
     config['bias'] = False
     config['dropout'] = 0.0
     config['batch_size'] = 2
-    config['mixop'] = "drnas"
-    model = GPT(config,use_we_v2=True)
+    config['mixop'] = "gdas"
+    model = GPT(config)
     model.sampler.set_taus(0.1,10)
     model.sampler.set_total_epochs(100)
     model.sampler.before_epoch()
-    torch.manual_seed(0)
     input = torch.randint(0, 100, (2, 10))
     target = torch.randint(0, 100, (2, 10))
-    model.load_state_dict(torch.load("rewrite_weights_gpt2.pth"),strict=False)
     output = model(input, target)
-    print(torch.sum(output[0]))'''
-    
+    print(output)'''

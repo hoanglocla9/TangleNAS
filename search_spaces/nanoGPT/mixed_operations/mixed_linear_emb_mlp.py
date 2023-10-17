@@ -25,21 +25,32 @@ class MixedLinearV2(nn.Module):
         return weight, bias
 
     def forward(self, x, weights, use_argmax=False):
+        #print("linear layer weight", self.linear_layer.weight.shape)
         if use_argmax:
             weights_max = torch.argmax(torch.tensor(weights), dim=-1)
+            #print("weights_max", weights_max)
             embed_dim_argmax_id = torch.div(weights_max, len(self.mlp_ratio_list), rounding_mode='floor')
             mlp_ratio_argmax_id = weights_max%len(self.embed_dim_list)
+            #print("Selected emb", self.embed_dim_list[embed_dim_argmax_id])
+            #print("Selected mlp", self.mlp_ratio_list[mlp_ratio_argmax_id])
             if self.reverse:
                 weight, bias = self.sample_weights_and_bias(
                     self.mlp_ratio_list[mlp_ratio_argmax_id]*self.embed_dim_list[embed_dim_argmax_id], self.embed_dim_list[embed_dim_argmax_id], self.linear_layer)
             else:
                 weight, bias = self.sample_weights_and_bias(
                     self.embed_dim_list[embed_dim_argmax_id], self.mlp_ratio_list[mlp_ratio_argmax_id]*self.embed_dim_list[embed_dim_argmax_id], self.linear_layer)
+            # pad weights and bias
+            #print(weight)
+            #print(weight.shape)
+            #print(bias)
+            #print(bias.shape)
             weight = weights[weights_max]*weight
             if bias is not None:
                 bias = weights[weights_max]*bias
             else:
                 bias = None
+            #print(weight)
+            #print(bias)
             out = F.linear(x, weight, bias)
         else:
             weights_mix = 0
@@ -53,17 +64,28 @@ class MixedLinearV2(nn.Module):
                     else:
                         weight, bias = self.sample_weights_and_bias(
                         self.embed_dim_list[i], self.embed_dim_list[i]*self.mlp_ratio_list[j], self.linear_layer)
+                    # pad weights and bias
+                    #print(weight.shape)
+                    #print("Choice emb",self.embed_dim_list[i])
+                    #print("Choice mlp",self.mlp_ratio_list[j])
+                    #print(weights[k]*weight)
+                    #print(weight.shape)
+                    #print(weights[k]*bias)
+                    #print(bias.shape)
                     weight = F.pad(
-                    weights[k]*weight, (0, self.max_in_dim-weight.shape[-1], 0, self.max_out_dim - weight.shape[-2]), "constant", 0)
+                    weight, (0, self.max_in_dim-weight.shape[-1], 0, self.max_out_dim - weight.shape[-2]), "constant", 0)
+                    #print(weight.shape)
                     if bias is not None:
-                        bias = F.pad(weights[k]*bias, (0, self.max_out_dim -
+                        bias = F.pad(bias, (0, self.max_out_dim -
                              bias.shape[-1]), "constant", 0)
-                    weights_mix += weight
+                    weights_mix += weights[k]*weight
                     if bias is not None:
-                        bias_mix += bias
+                        bias_mix += weights[k]*bias
                     else:
                         bias_mix = None
                     k = k+1
+            #print("weights_mix", weights_mix)
+            #print("bias_mix", bias_mix)
             out = F.linear(x, weights_mix, bias_mix)
 
         return out

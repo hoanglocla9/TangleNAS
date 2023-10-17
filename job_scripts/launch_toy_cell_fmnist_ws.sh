@@ -1,5 +1,5 @@
 #!/bin/bash
-optimizers=("drnas" "darts_v1" "gdas" "darts_v2")
+optimizers=("drnas")
 datasets=("fashion_mnist")
 seed=(9001 9002 9003 9004)
 entanglements=("ws")

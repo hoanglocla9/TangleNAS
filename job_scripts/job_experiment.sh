@@ -35,6 +35,6 @@ else
     we_v2_flag=""
 fi
 
-python_cmd="python -m search.experiment_search --dataset ${dataset} --optimizer ${optimizer} --searchspace ${search_space} --seed ${seed} ${submission_flag} ${we_flag} ${we_v2_flag} --path_to_benchmark /work/dlclarge2/sukthank-tanglenas/merge_with_main/TangleNAS-dev/entangled_cell_ss_benchmark.pkl"
+python_cmd="python -m search.experiment_search --dataset ${dataset} --optimizer ${optimizer} --searchspace ${search_space} --seed ${seed} ${submission_flag} ${we_flag} ${we_v2_flag} --path_to_benchmark toy_benchmarks/entangled_cell_ss_benchmark.pkl"
 
 eval $python_cmd

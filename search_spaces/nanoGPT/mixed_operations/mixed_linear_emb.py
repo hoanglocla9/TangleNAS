@@ -37,16 +37,16 @@ class MixedLinearV2Emb(nn.Module):
                 weight, bias = self.sample_weights_and_bias(
                 self.emb_dim_list[i], self.emb_dim_list[i], self.linear_layer)
                 # pad weights and bias
-                weight = F.pad(weights[i]*weight, (0, self.max_out_dim -
+                weight = F.pad(weight, (0, self.max_out_dim -
                            weight.shape[-1], 0, self.max_out_dim - weight.shape[-1]), "constant", 0)
                 if bias is not None:
-                    bias = F.pad(weights[i]*bias, (0, self.max_out_dim -
+                    bias = F.pad(bias, (0, self.max_out_dim -
                          bias.shape[-1]), "constant", 0)
                 else:
                     bias = None
-                weights_mix += weight
+                weights_mix += weights[i]*weight
                 if bias is not None:
-                    bias_mix += bias
+                    bias_mix += weights[i]*bias
                 else:
                     bias_mix = None
             #print("weights_mix:", weights_mix)

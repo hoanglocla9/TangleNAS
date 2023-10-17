@@ -19,7 +19,7 @@ class MixedAttnHeadEmbed(torch.nn.Module):
         self.T = T
         self.C = C
         self.bias = bias
-        self.mask = torch.tril(torch.ones(T, T)).view(1, 1, T, T).cuda()
+        self.mask = torch.tril(torch.ones(T, T)).view(1, 1, T, T).to("cuda")
 
     def forward_attention(self, k , q, v):
         if self.flash:
@@ -136,7 +136,7 @@ class MixedAttnEmbd(torch.nn.Module):
         self.T = T
         self.C = C
         self.bias = bias
-        self.mask = torch.tril(torch.ones(T, T)).view(1, 1, T, T).cuda()
+
 
     def forward_attention(self, k , q, v):
         if self.flash:

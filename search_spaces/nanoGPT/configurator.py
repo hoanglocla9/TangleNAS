@@ -17,11 +17,9 @@ comes up with a better simple Python solution I am all ears.
 import sys
 from ast import literal_eval
 
-for arg in [sys.argv[2]]:
-    if '=' not in arg:
-        # assume it's the name of a config file
-        assert not arg.startswith('--')
-        config_file = arg
+for arg in sys.argv[1:]:
+    if arg.startswith("config="):
+        config_file = arg.split("=")[1]
         print(f"Overriding config with {config_file}:")
         with open(config_file) as f:
             print(f.read())
@@ -41,7 +39,7 @@ for arg in [sys.argv[2]]:
             # ensure the types match ok
             assert type(attempt) == type(globals()[key])
             # cross fingers
-            print(f"Overriding: {key} = {attempt}")
+            print(f"Poor Man's Configurator:: Overriding: {key} = {attempt}")
             globals()[key] = attempt
         else:
-            raise ValueError(f"Unknown config key: {key}")
+            print(f"Poor Man's Configurator:: Unknown config key: {key}")

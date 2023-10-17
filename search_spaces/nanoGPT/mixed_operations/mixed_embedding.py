@@ -23,11 +23,9 @@ class MixedEmbeddingV2(nn.Module):
             embedding_mixture = 0
             i=0
             for embed_dim in self.embed_dim_list:
-                #print(self.embed_dim_list)
                 emb_weight = self.sample_weights_and_bias(embed_dim)
-                emb_weight_padded = F.pad(weights[i]*emb_weight, (0,self.max_embed_dim - emb_weight.shape[-1]), "constant", 0)
-                #print(weights)
-                embedding_mixture+= emb_weight_padded
+                emb_weight_padded = F.pad(emb_weight, (0,self.max_embed_dim - emb_weight.shape[-1]), "constant", 0)
+                embedding_mixture+=weights[i] * emb_weight_padded
                 i+=1
             #print("embedding_mixture:", embedding_mixture)
             out = F.embedding(x, embedding_mixture)

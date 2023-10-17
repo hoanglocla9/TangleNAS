@@ -69,10 +69,10 @@ def get_batch(train_data, eval_data, test_data, split: str, block_size: int = 8,
     )
     # extracting a sentence of length `block_size` for every
     # random starting point in `ix`
-    x = torch.stack([data[i:i+block_size] for i in ix])
+    x = torch.stack([torch.from_numpy((data[i : i + block_size]).astype(np.int64)) for i in ix])
     # extracting a sentence of length `block_size` for every
     # random starting point in `ix` + 1 (shifted to right)
-    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
+    y = torch.stack([torch.from_numpy((data[i + 1 : i + 1 + block_size]).astype(np.int64)) for i in ix])
     x, y = x.to(device), y.to(device)
     return x, y
 
@@ -118,18 +118,13 @@ class EvolutionSearcher(object):
         stoi = {ch: i for i, ch in enumerate(chars)}
         itos = {i: ch for i, ch in enumerate(chars)}
         # Train and test splits
-        train_size = 0.9
-        data = torch.tensor(encode(text), dtype=torch.long)
-        n = int(train_size * len(data))
-        train_data = data[:n]
-        self.test_data = data[n:]
-        train_portion = args.train_portion
-        n_train = int(train_portion * len(train_data))
-        #print(n_train)
-        #print(len(train_data))
-        self.train_data = train_data[:n_train]
-        #print(len(train_data))
-        self.valid_data = train_data[n_train:]
+        data = np.memmap(os.path.join("data/", "train.bin"), dtype=np.uint16, mode="r")
+        # split dataset based upon train portion if alternating optimization
+        # # shuffle train data
+        self.train_data = data[: int(args.train_portion * len(data))]
+        self.val_data = data[int(args.train_portion * len(data)) :]
+        self.exp_name = args.model_path.split("/")[-2]
+        self.test_data = np.memmap(os.path.join("data/", "val.bin"), dtype=np.uint16, mode="r")
 
     def save_checkpoint(self):
 
@@ -184,7 +179,7 @@ class EvolutionSearcher(object):
         for split in ['valid', 'test']:
             losses = torch.zeros(self.eval_iters)
             for k in range(self.eval_iters):
-                X, Y = get_batch(self.train_data, self.valid_data,self.test_data,split)
+                X, Y = get_batch(self.train_data, self.val_data,self.test_data,split)
                 logits, loss = model(X, Y, config)
                 losses[k] = loss.item()
             out[split] = losses.mean()
@@ -199,7 +194,7 @@ class EvolutionSearcher(object):
         t.sort(key=key, reverse=reverse)
         self.keep_top_k[k] = t[:k]
 
-    def stack_random_cand(self, random_func, *, batchsize=100):
+    def stack_random_cand(self, random_func, *, batchsize=200):
         while True:
             cands = []
             for _ in range(batchsize):
@@ -406,12 +401,12 @@ def get_args_parser():
     # evolution search parameters
     parser.add_argument('--max-epochs', type=int, default=50)
     parser.add_argument('--select-num', type=int, default=10)
-    parser.add_argument('--population-num', type=int, default=30)
+    parser.add_argument('--population-num', type=int, default=50)
     parser.add_argument('--m_prob', type=float, default=0.2)
     parser.add_argument('--s_prob', type=float, default=0.4)
-    parser.add_argument('--crossover-num', type=int, default=10)
+    parser.add_argument('--crossover-num', type=int, default=25)
     parser.add_argument('--epochs', type=int, default=50)
-    parser.add_argument('--mutation-num', type=int, default=10)
+    parser.add_argument('--mutation-num', type=int, default=25)
     parser.add_argument('--param-limits', type=float, default=10000000)
     parser.add_argument('--min-param-limits', type=float, default=0)
 
@@ -542,7 +537,7 @@ def get_args_parser():
                         type=str, help='semantic granularity')
     parser.add_argument('--no-prefetcher', action='store_true', default=False,
                         help='disable fast prefetcher')
-    parser.add_argument('--output_dir', default='evo_checkpoint',
+    parser.add_argument('--output_dir', default='evo_2',
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -647,13 +642,15 @@ def main(args):
     model_path = args.model_path
     choices = {}
 
-    choices["num_layers"] = [2, 4, 6]
-    choices["embed_dim"] = [96, 192, 384]
-    choices["num_heads"] = [2, 4, 6]
+    choices["num_layers"] = [5,6,7]
+    choices["embed_dim"] = [384, 576, 768]
+    choices["num_heads"] = [6,8,12]
     choices["mlp_ratio"] = [2,3,4]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model_args = dict(n_layer=[4,5,6], n_head=[2,4,6], n_embd=[96,192,384], block_size=256,
-                  bias=False, vocab_size=65, dropout=0.2, mlp_ratio=[2,3,4])
+    #dict(n_layer=[5,6,7], n_head=[6,8,12], n_embd=[384, 576, 768], block_size=224,
+    #bias=False, vocab_size=50304, dropout=0.2, mlp_ratio=[2,3,4])
+    model_args = dict(n_layer=[5,6,7], n_head=[6,8,12], n_embd=[384, 576, 768], block_size=224,
+                  bias=False, vocab_size=50304, dropout=0.2, mlp_ratio=[2,3,4])
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
     model_state_dict = torch.load(model_path)["model"]

@@ -36,6 +36,10 @@ class MixedEmbeddingAttention(nn.Module):
             i=0
             for embed_dim in self.embed_dim_list:
                 linear_weight, linear_bias = self.sample_weights_and_bias(embed_dim)
+                #print(self.linear_layer.weight.shape)
+                ##print(self.linear_layer.bias.shape)
+                #print(linear_weight.shape)
+                #print(linear_bias.shape)
                 linear_weight_padded = F.pad(linear_weight, (0,self.max_embed_dim - linear_weight.shape[-1],0, 3*self.max_embed_dim - linear_weight.shape[-2]), "constant", 0)
                 linear_weight_mixture += weights[i] * linear_weight_padded
                 if linear_bias is not None:

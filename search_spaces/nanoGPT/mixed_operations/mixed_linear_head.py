@@ -29,11 +29,11 @@ class MixedLinearHeadV2(nn.Module):
                 self.input_dim_list[i], self.linear_layer)
                 # pad weights and bias
                 # print("Heeey",weight.shape)
-                weight = F.pad(weights[i]*weight, (0, self.max_embed_dim -
+                weight = F.pad(weight, (0, self.max_embed_dim -
                            weight.shape[-1]), "constant", 0)
                 # print("Heeey",weight.shape)
                 # print(bias.shape)
-                weights_mix += weight
+                weights_mix += weights[i]*weight
             out = F.linear(x, weights_mix, bias)
 
         return out

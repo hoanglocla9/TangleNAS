@@ -492,7 +492,7 @@ def main(args):
     ratio = args.ratio
     len_train = int((ratio) * len(dataset_train))
     len_val = len(dataset_train) - len_train
-    data_path  = "/gpfs/bwfor/work/ws/fr_rs1131-tanglenas/subImageNet"
+    data_path  = "/path/to/subImageNet"
     dataset_val, _ = build_dataset(is_train= True, args=args, data_path=data_path)
     #dataset_train, dataset_val = torch.utils.data.random_split(
     #    dataset_train, [

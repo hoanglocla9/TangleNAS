@@ -375,7 +375,7 @@ if __name__ == '__main__':
     parser.add_argument('--load_saved_model', action='store_true', default=False,
                         help='Load the saved models before searching the supernet')
     parser.add_argument('--path_to_benchmark', type=str,
-                        default='/work/dlclarge2/sukthank-tanglenas/merge/TangleNAS-dev/toy_search_spaces/conv_macro/results/conv_macro_bench.pkl', help='Path to benchmark')
+                        default='/path/to/conv_macro_bench.pkl', help='Path to benchmark')
     parser.add_argument('--data_path', type=str,
                         default='.', help='Path to dataset')
     parser.add_argument('--no_weight_entanglement', default=False,

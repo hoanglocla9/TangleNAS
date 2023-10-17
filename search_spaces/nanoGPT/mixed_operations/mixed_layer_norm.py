@@ -34,14 +34,14 @@ class MixedLayerNormV2(nn.Module):
             for i, embed_dim in enumerate(self.embed_dim_list):
                 weight, bias = self.sample_weights_and_bias(embed_dim)
                 # pad weights and bias
-                weight = torch.nn.functional.pad(weights[i]*weight, (0,self.max_embed_dim - weight.shape[-1]), "constant", 0)
+                weight = torch.nn.functional.pad(weight, (0,self.max_embed_dim - weight.shape[-1]), "constant", 0)
                 if bias is None:
                     bias = None
                 else:
-                    bias = torch.nn.functional.pad(weights[i]*bias, (0,self.max_embed_dim - bias.shape[-1]), "constant", 0)
-                weights_mix += weight
+                    bias = torch.nn.functional.pad(bias, (0,self.max_embed_dim - bias.shape[-1]), "constant", 0)
+                weights_mix += weights[i]*weight
                 if bias is not None:
-                    bias_mix += bias
+                    bias_mix += weights[i]*bias
                 else:
                     bias_mix = None
             #print(weights_mix, bias_mix)

@@ -7,19 +7,12 @@ import matplotlib.pyplot as plt
 import argparse
 
 import torch
-
+import os
 import contextlib
 import pickle
-from toy_search_spaces.nanoGPT.model_spos import GPT, GPTConfig
+from model_spos import GPT, GPTConfig
 # Encoder: take a string, output a list of integers
 
-
-def encode(s):
-    return [stoi[c] for c in s]
-
-# Decoder: take a list of integers, output a string
-def decode(l):
-    return ''.join([itos[i] for i in l])
 
 
 
@@ -50,10 +43,10 @@ def get_batch(train_data, eval_data, test_data, split: str, block_size: int = 8,
     )
     # extracting a sentence of length `block_size` for every
     # random starting point in `ix`
-    x = torch.stack([data[i:i+block_size] for i in ix])
+    x = torch.stack([torch.from_numpy((data[i : i + block_size]).astype(np.int64)) for i in ix])
     # extracting a sentence of length `block_size` for every
     # random starting point in `ix` + 1 (shifted to right)
-    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
+    y = torch.stack([torch.from_numpy((data[i + 1 : i + 1 + block_size]).astype(np.int64)) for i in ix])
     x, y = x.to(device), y.to(device)
     return x, y
 
@@ -247,36 +240,20 @@ class RandomSearch(NASOptimizer):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_path', type=str, default="/work/dlclarge2/sukthank-tanglenas/merge/TangleNAS-dev/out_train_spos_spos_9004_0.8/ckpt.pt")
+    parser.add_argument('--model_path', type=str, default="/work/dlclarge2/sukthank-llama/tanglenas_checkpoints/all_models/out_search_spos_0.8_9001_6000_20230828-174230/latest_ckpt.pt")
     parser.add_argument('--n_iters', type=int, default=5000)
-    parser.add_argument('--train_portion', type=float, default=0.8)
+    parser.add_argument('--train_portion', type=float, default=0.5)
     parser.add_argument('--optimizer', type=str, default="spos")
     args = parser.parse_args()
-    with open('/work/dlclarge2/sukthank-tanglenas/merge/TangleNAS-dev/toy_search_spaces/nanoGPT/data/shakespeare_char/input.txt', 'r', encoding='utf-8') as f:
-        text = f.read()
+    data = np.memmap(os.path.join("data/", "train.bin"), dtype=np.uint16, mode="r")
+    # split dataset based upon train portion if alternating optimization
+    # shuffle train data
+    train_data = data[: int(args.train_portion * len(data))]
+    val_data = data[int(args.train_portion * len(data)) :]
     exp_name = args.model_path.split("/")[-2]
-    # Checking all the unique characters that occur in this text
-    chars = sorted(list(set(text)))
-    vocab_size = len(chars)
-    vocab_set = "".join(chars)
-    # Create a mapping from characters to integers
-    stoi = {ch: i for i, ch in enumerate(chars)}
-    itos = {i: ch for i, ch in enumerate(chars)}
-    # Train and test splits
-    train_size = 0.9
-    data = torch.tensor(encode(text), dtype=torch.long)
-    n = int(train_size * len(data))
-    train_data = data[:n]
-    valid_data = data[n:]
-    train_portion = args.train_portion
-    n_train = int(train_portion * len(train_data))
-    #print(n_train)
-    #print(len(train_data))
-    train_data_split = train_data[:n_train]
-    #print(len(train_data))
-    eval_data_split = train_data[n_train:]
+    test_data = np.memmap(os.path.join("data/", "val.bin"), dtype=np.uint16, mode="r")
     #print(len(eval_data))
-    model_args = dict(n_layer=[4,5,6], n_head=[2,4,6], n_embd=[96,192,384], block_size=256,
-                  bias=False, vocab_size=65, dropout=0.2, mlp_ratio=[2,3,4])
-    rs = RandomSearch(args.model_path, model_args, train_data_split, eval_data_split, valid_data, args.train_portion, args.optimizer, exp_name)
+    model_args = dict(n_layer=[5,6,7], n_head=[6,8,12], n_embd=[384, 576, 768], block_size=224,
+                  bias=False, vocab_size=50304, dropout=0.2, mlp_ratio=[2,3,4])
+    rs = RandomSearch(args.model_path, model_args, train_data, val_data, test_data, args.train_portion, args.optimizer, exp_name)
     rs.optimize(args.n_iters)

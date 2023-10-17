@@ -40,4 +40,4 @@ echo $seed
 echo $optimizer
 echo $dataset
 echo $search_space
-python -m search.experiment_search --dataset ${dataset} --optimizer ${optimizer} --searchspace ${search_space} --seed ${seed} ${submission_flag} --path_to_benchmark /work/dlclarge2/sukthank-tanglenas/merge_with_main/TangleNAS-dev/entangled_cell_ss_benchmark.pkl --no_weight_entanglement
+python -m search.experiment_search --dataset ${dataset} --optimizer ${optimizer} --searchspace ${search_space} --seed ${seed} ${submission_flag} --path_to_benchmark toy_benchmarks/entangled_cell_ss_benchmark.pkl --no_weight_entanglement
