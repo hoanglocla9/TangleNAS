@@ -324,7 +324,7 @@ def train(run_manager, args, validate_func=None):
                     "genotype": run_manager.network.get_arch_represenation(),
                 }
 
-                wandb.log(state)
+                #wandb.log(state)
 
         save_model(
             run_manager,

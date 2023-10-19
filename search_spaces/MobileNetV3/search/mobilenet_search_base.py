@@ -89,8 +89,8 @@ elif args.task == "depth":
 #        args.expand_list = "4,6"
 #        args.depth_list = "2,3,4"
 #else:
-args.n_epochs = 300
-args.base_lr = 7.5e-3
+args.n_epochs = 500
+args.base_lr = 3e-2
 args.warmup_epochs = 5
 args.warmup_lr = -1
 args.ks_list = "3,5,7"
@@ -101,7 +101,7 @@ args.path = "experiments/mobilenet_drnas" #test"
 args.seed = 9001
 args.lr_schedule_type = "cosine"
 args.world_size = 1
-args.base_batch_size = 64
+args.base_batch_size = 256
 
 if args.opt_strategy == "simultaneous":
     args.valid_size = None
@@ -229,20 +229,20 @@ def main(args):
     )
 
 
-    if global_rank == 0:
-        project_name = "tanglenas-submission"
-        name = f"we2_mobilenetv3_{args.one_shot_opt}_imagenet_{args.seed}"
-        wandb.init(project=project_name, entity="nas-team-freiburg", name=name)
-        wandb.config.update(args.__dict__)
-        wandb.config.seed = args.seed
-        wandb.watch(net.module)
+    #if global_rank == 0:
+    #    #project_name = "tanglenas-submission"
+    #    #name = f"we2_mobilenetv3_{args.one_shot_opt}_imagenet_{args.seed}"
+    #    #wandb.init(project=project_name, entity="nas-team-freiburg", name=name)
+    #    #wandb.config.update(args.__dict__)
+    #    #wandb.config.seed = args.seed
+    #    #wandb.watch(net.module)
 
-    try:
-        run_name = wandb.run.name
-        run_id = wandb.run.id
-    except Exception:
-        run_name = f"mobilenetv3_{args.one_shot_opt}_{args.opt_strategy}_{args.seed}"
-        run_id = ""
+    #try:
+    #    run_name = wandb.run.name
+    #    run_id = wandb.run.id
+    #except Exception:
+    run_name = f"mobilenetv3_{args.one_shot_opt}_{args.opt_strategy}_{args.seed}"
+    run_id = ""
 
     model_name = f"{run_name}_{run_id}"
     net.module.model_name = model_name
@@ -259,7 +259,7 @@ def main(args):
     )
 
     distributed_run_manager.save_config()
-
+    distributed_run_manager.load_model()
     validate_func_dict = {
         "image_size": args.image_size
             if isinstance(args.image_size, int)

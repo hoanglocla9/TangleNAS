@@ -159,6 +159,7 @@ class RunManager:
 
     def load_model(self, model_fname=None):
         latest_fname = os.path.join(self.save_path, "latest.txt")
+
         if model_fname is None and os.path.exists(latest_fname):
             with open(latest_fname, "r") as fin:
                 model_fname = fin.readline()
@@ -171,11 +172,11 @@ class RunManager:
                 with open(latest_fname, "w") as fout:
                     fout.write(model_fname + "\n")
             print("=> loading checkpoint '{}'".format(model_fname))
-            checkpoint = torch.load(model_fname, map_location="cpu")
+            checkpoint = torch.load("/pfs/work7/workspace/scratch/fr_rs1131-tanglenas/TangleNAS-dev/experiments/mobilenet_drnas/mobilenetv3_drnas_alternating_9001__e129.pth.tar", map_location="cpu")
         except Exception:
             print("fail to load checkpoint from %s" % self.save_path)
             return {}
-
+        checkpoint = torch.load("/pfs/work7/workspace/scratch/fr_rs1131-tanglenas/TangleNAS-dev/experiments/mobilenet_drnas/mobilenetv3_drnas_alternating_9001__e129.pth.tar", map_location="cpu")
         self.network.load_state_dict(checkpoint["state_dict"])
         if "epoch" in checkpoint:
             self.start_epoch = checkpoint["epoch"] + 1

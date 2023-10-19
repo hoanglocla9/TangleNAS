@@ -50,11 +50,11 @@ class OFAMobileNetV3(MobileNetV3):
         final_expand_width = make_divisible(
             base_stage_width[-2] * self.width_mult, MyNetwork.CHANNEL_DIVISIBLE
         )
-        #print("final_expand_width", final_expand_width)
+        print("final_expand_width", final_expand_width)
         last_channel = make_divisible(
             base_stage_width[-1] * self.width_mult, MyNetwork.CHANNEL_DIVISIBLE
         )
-        #print("last_channel", last_channel)
+        print("last_channel", last_channel)
 
         stride_stages = [1, 2, 2, 2, 1, 2]
         act_stages = ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"]
@@ -249,11 +249,6 @@ class OFAMobileNetV3(MobileNetV3):
             ks=max(self.ks_list), e=max(self.expand_ratio_list), d=max(self.depth_list)
         )
 
-    def set_best_net(self):
-        self.set_active_subnet(
-            ks=[7,5,5,7,5,5,7,7,5,7,7,7,5,7,7,5,5,7,7,5], e=[6, 6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6], d=[4,4,4,4,4]
-        , preserve_weight=True)
-
     def set_active_subnet(self, ks=None, e=None, d=None, **kwargs):
         ks = val2list(ks, len(self.blocks) - 1)
         expand_ratio = val2list(e, len(self.blocks) - 1)
@@ -417,8 +412,8 @@ class OFAMobileNetV3(MobileNetV3):
             block.conv.re_organize_middle_weights(expand_ratio_stage)
 
 
-#model = OFAMobileNetV3(ks_list=[3, 5, 7], depth_list=[
-#                       1, 2], expand_ratio_list=[3, 4, 6]).cuda()
-#model.set_max_net()
-#inp = torch.randn([32, 3, 224, 224]).cuda()
-#summary(model, (3, 224, 224))
+model = OFAMobileNetV3(ks_list=[3, 5, 7], depth_list=[
+                       1, 2], expand_ratio_list=[3, 4, 6]).cuda()
+model.set_max_net()
+inp = torch.randn([32, 3, 224, 224]).cuda()
+summary(model, (3, 224, 224))

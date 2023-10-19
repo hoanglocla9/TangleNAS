@@ -610,13 +610,16 @@ class ResidualBlock(MyModule):
         self.conv = conv
         self.shortcut = shortcut
 
-    def forward(self, x):
+    def forward(self, x, expand_ratio_weight=None, kernel_size_weight=None):
         if self.conv is None or isinstance(self.conv, ZeroLayer):
             res = x
         elif self.shortcut is None or isinstance(self.shortcut, ZeroLayer):
-            res = self.conv(x)
+            res = self.conv(x, expand_ratio_weight, kernel_size_weight).cuda()
         else:
-            res = self.conv(x) + self.shortcut(x)
+            if isinstance(self.conv, MBConvLayer):
+                res = self.conv(x) + self.shortcut(x)
+            else:
+                res = self.conv(x, expand_ratio_weight, kernel_size_weight).cuda() + self.shortcut(x)
         return res
 
     @property

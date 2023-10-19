@@ -26,7 +26,7 @@ class ConcatDataset(torch.utils.data.Dataset):
         return max(len(d) for d in self.datasets)
 
 class ImagenetDataProvider(DataProvider):
-    DEFAULT_PATH = "/path/to/imagenet"
+    DEFAULT_PATH = "/path/to/imgnet"
 
     def __init__(
         self,
@@ -71,7 +71,7 @@ class ImagenetDataProvider(DataProvider):
             train_loader_class = torch.utils.data.DataLoader
 
         train_dataset = self.train_dataset(self.build_train_transform())
-        valid_size = 500
+        valid_size = 10000
         if valid_size is not None:
             if not isinstance(valid_size, int):
                 assert isinstance(valid_size, float) and 0 < valid_size < 1

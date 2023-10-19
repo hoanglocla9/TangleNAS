@@ -33,39 +33,7 @@ from search_spaces.AutoFormer.lib.utils import MetricLogger
 
 __all__ = ["DistributedRunManager"]
 
-def preprocess(key):
-    if "conv.point_linear.bn" in key:
-        k_split = key.split('.')
-        new_key = ''
-        k_prev = ''
-        i = 0
-        if "bn.bn" not in key:
-         for k_sub in k_split:
-            if k_prev=="bn":
-                if i>0:
-                   new_key = new_key+".bn."+k_sub
-                else:
-                   new_key = k_sub
-            else:
-                if i>0:
-                    new_key = new_key+"."+k_sub
-                else:
-                    new_key = k_sub
-            k_prev = k_sub
-            i = i+1
-        else:
-            print(k_split)
-            del k_split[-2]
-            i = 0
-            for k_sub in k_split:
-                if i == 0:
-                    new_key = k_sub
-                else:
-                    new_key = new_key+'.'+k_sub
-                i = i+1
-        #print(new_key)
-        return new_key
-    return k
+
 class DistributedRunManager:
     def __init__(
         self,
@@ -149,7 +117,6 @@ class DistributedRunManager:
                         net_params.append(param)
         self.optimizer = self.run_config.build_optimizer(net_params)
         self.architect = architect
-        self.load_model()
 
     """ save path and log path """
 
@@ -232,56 +199,35 @@ class DistributedRunManager:
                 torch.save({"state_dict": checkpoint["state_dict"]}, best_path)
 
     def load_model(self, model_fname=None):
-            #if self.is_root:
-            #latest_fname = os.path.join(self.save_path, "latest.txt")
-            #if model_fname is None and os.path.exists(latest_fname):
-            #    with open(latest_fname, "r") as fin:
-            #        model_fname = fin.readline()
-            #        if model_fname[-1] == "\n":
-            #            model_fname = model_fname[:-1]
+        self.is_root = True
+        if self.is_root:
+            latest_fname = os.path.join(self.save_path, "latest.txt")
+            if model_fname is None and os.path.exists(latest_fname):
+                with open(latest_fname, "r") as fin:
+                    model_fname = fin.readline()
+                    if model_fname[-1] == "\n":
+                        model_fname = model_fname[:-1]
             # noinspection PyBroadException
-            #try:
-            #    if model_fname is None or not os.path.exists(model_fname):
-            #        model_fname = "%s/checkpoint.pth.tar" % self.save_path
-            #        with open(latest_fname, "w") as fout:
-            #            fout.write(model_fname + "\n")
-            #    print("=> loading checkpoint '{}'".format(model_fname))
-            #    checkpoint = torch.load(model_fname, map_location="cpu")
-            #except Exception:
-            #    self.write_log(
-            #        "fail to load checkpoint from %s" % self.save_path, "valid"
-            #    )
-            #    return
-            state_dict = torch.load("/gpfs/bwfor/work/ws/fr_rs1131-tanglenas/best_we2_mobilenetv3_drnas_imagenet_9001_3k1e94md_e240.pth.tar")["state_dict"]
-            state_dict_new = {}
-            for k in state_dict.keys(): 
-                if "arch" not in k:
-                    if k not in self.net.state_dict():
-                        #print("Key before", k)
-                        k_new = preprocess(k)
-                        #print("Key after", k)
-                        state_dict_new[k_new] = state_dict[k]
-                    else:
-                        state_dict_new[k] = state_dict[k]
-                else:
-                    print(k)
-                    print(state_dict[k])
-            list_ours = list(state_dict_new.keys())
-            list_ofa = list(self.net.state_dict().keys())
-            print(sorted(list(set(list_ofa) - set(list_ours))))
-            print(sorted(list(set(list_ours) - set(list_ofa))))
-            self.net.load_state_dict(state_dict_new)
-            print("Loaded state dict")
-            self.net.set_best_net()
-            #subnet = self.net.get_active_subnet(preserve_weight=True)
-            #self.net = subnet
-            #self.net.load_state_dict(checkpoint["state_dict"])
-            #if "epoch" in checkpoint:
-            #    self.start_epoch = checkpoint["epoch"] + 1
-            #if "best_acc" in checkpoint:
-            #    self.best_acc = checkpoint["best_acc"]
-            #if "optimizer" in checkpoint:
-            #    self.optimizer.load_state_dict(checkpoint["optimizer"])
+            '''try:
+                if model_fname is None or not os.path.exists(model_fname):
+                    model_fname = "%s/checkpoint.pth.tar" % self.save_path
+                    with open(latest_fname, "w") as fout:
+                        fout.write(model_fname + "\n")
+                print("=> loading checkpoint '{}'".format(model_fname))
+                checkpoint = torch.load("/pfs/work7/workspace/scratch/fr_rs1131-tanglenas/TangleNAS-dev/experiments/mobilenet_drnas/we2_mobilenetv3_drnas_imagenet_9001_iwxgpv0d_e39.pth.tar", map_location="cpu")
+            except Exception:
+                self.write_log(
+                    "fail to load checkpoint from %s" % self.save_path, "valid"
+                )
+                return'''
+            checkpoint = torch.load("/path/to/old_ckpt.pth", map_location="cpu")
+            self.net.load_state_dict(checkpoint["state_dict"])
+            if "epoch" in checkpoint:
+                self.start_epoch = checkpoint["epoch"] + 1
+            if "best_acc" in checkpoint:
+                self.best_acc = checkpoint["best_acc"]
+            if "optimizer" in checkpoint:
+                self.optimizer.load_state_dict(checkpoint["optimizer"])
 
             self.write_log("=> loaded checkpoint '{}'".format(model_fname), "valid")
 
@@ -415,8 +361,8 @@ class DistributedRunManager:
         )
         print("Arch params sampled: ")
 
-        #for p in model.module.arch_parameters():
-        #    print(torch.nn.functional.softmax(p,dim=-1))
+        for p in model.module.arch_parameters():
+            print(torch.nn.functional.softmax(p,dim=-1))
 
         return (
             metric_logger.loss.avg,
@@ -545,7 +491,6 @@ class DistributedRunManager:
                 t.update(1)
                 end = time.time()
                 print(losses.avg.item())
-                #break
         return losses.avg.item(), self.get_metric_vals(metric_dict)
 
     def train(self, args, warmup_epochs=5, warmup_lr=0):
