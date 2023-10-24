@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import numpy as np
 OPS = {
     'none':
     lambda C, stride, affine: Zero(stride),
@@ -33,6 +33,184 @@ OPS = {
         nn.BatchNorm2d(C, affine=affine)),
 }
 
+class DilConvMixture(nn.Module):
+    
+  def __init__(self, op, kernel_size_list, kernel_max):
+    super(DilConvMixture, self).__init__()
+    self.op = op
+    self.kernel_list = kernel_size_list
+    self.kernel_max = kernel_max
+
+  def _compute_weight_and_bias(self, weights, idx, conv_weight, conv_bias, use_argmax=False):
+        alpha = weights[idx]
+
+        kernel_size = self.kernel_list[idx]
+        start = 0 + (self.kernel_max - kernel_size) // 2
+        end = start + kernel_size
+        weight_curr = self.op.op[1].weight[:, :, start:end, start:end]
+        if use_argmax == False:
+            conv_weight += alpha * F.pad(weight_curr, (start, start, start, start), "constant", 0)
+        else:
+            conv_weight += alpha * weight_curr
+
+        if self.op.op[1].bias is not None:
+            conv_bias = self.op.op[1].bias
+
+        return conv_weight, conv_bias
+  
+  def get_padding(self, kernel_size):
+        if kernel_size == 3:
+            return 2
+        elif kernel_size == 5:
+            return 4
+        else:
+            return 1
+
+  def forward(self, input, weights, use_argmax = False):
+        x = input
+        x = self.op.op[0](x)
+        conv_weight = 0
+        conv_bias = 0
+        if use_argmax == True:
+            argmax = np.array([w.item() for w in weights]).argmax()
+            conv_weight, conv_bias = self._compute_weight_and_bias(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                use_argmax=use_argmax
+            )
+            selected_kernel_size = self.kernel_list[argmax]
+        else:
+            for i, _ in enumerate(weights):
+                conv_weight, conv_bias = self._compute_weight_and_bias(
+                    weights=weights,
+                    idx=i,
+                    conv_weight=conv_weight,
+                    conv_bias=conv_bias,
+                    use_argmax=use_argmax
+                )
+            selected_kernel_size = max(self.kernel_list)
+        x = F.conv2d(x,
+                weight=conv_weight,
+                bias=conv_bias if self.op.op[1].bias is not None else None,
+                stride=self.op.op[1].stride,
+                padding=self.get_padding(selected_kernel_size),
+                dilation = self.op.op[1].dilation,
+                groups = self.op.op[1].groups)  
+        x = self.op.op[2](x)   
+        x = self.op.op[3](x)
+        return x
+
+
+
+class SepConvMixture(nn.Module):
+    
+  def __init__(self, op, kernel_size_list, kernel_max):
+    super(SepConvMixture, self).__init__()
+    self.op = op
+    self.kernel_list = kernel_size_list
+    self.kernel_max = kernel_max
+
+  def _compute_weight_and_bias(self, weights, idx, conv_weight, conv_bias, op_id, use_argmax=False):
+    alpha = weights[idx]
+
+    kernel_size = self.kernel_list[idx]
+    start = 0 + (self.kernel_max - kernel_size) // 2
+    end = start + kernel_size
+    weight_curr = self.op.op[op_id].weight[:, :, start:end, start:end]
+    if use_argmax == False :
+        conv_weight += alpha * F.pad(weight_curr, (start, start, start, start), "constant", 0)
+    else:
+        conv_weight += alpha * weight_curr
+
+    if self.op.op[op_id].bias is not None:
+        if use_argmax == False:
+            conv_bias = self.op.op[op_id].bias
+        else:
+            conv_bias = self.op.op[op_id].bias
+
+    return conv_weight, conv_bias
+  
+  def get_padding(self, kernel_size):
+        if kernel_size == 3:
+            return 1
+        elif kernel_size == 5:
+            return 2
+        else:
+            return 1
+
+  def forward(self, input, weights , use_argmax=False ):
+    x = input
+    x = self.op.op[0](x)
+    conv_weight = 0
+    conv_bias = 0
+    if use_argmax == True:
+        argmax = np.array([w.item() for w in weights]).argmax()
+        conv_weight, conv_bias = self._compute_weight_and_bias(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                op_id=1,
+                use_argmax=use_argmax
+            )
+        selected_kernel_size = self.kernel_list[argmax]
+    else:
+        for i, _ in enumerate(weights):
+            conv_weight, conv_bias = self._compute_weight_and_bias(
+            weights=weights,
+            idx=i,
+            conv_weight=conv_weight,
+            conv_bias=conv_bias,
+            op_id=1,
+            use_argmax=use_argmax
+            )
+        selected_kernel_size = max(self.kernel_list)
+    x = F.conv2d(x,
+                weight=conv_weight,
+                bias=conv_bias if self.op.op[1].bias is not None else None,
+                stride=self.op.op[1].stride,
+                padding=self.get_padding(selected_kernel_size),
+                dilation = self.op.op[1].dilation,
+                groups = self.op.op[1].groups)  
+    x = self.op.op[2](x)   
+    x = self.op.op[3](x)
+    x = self.op.op[4](x)
+    conv_weight = 0
+    conv_bias = 0
+    if use_argmax == True:
+        argmax = np.array([w.item() for w in weights]).argmax()
+        conv_weight, conv_bias = self._compute_weight_and_bias(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                op_id=5,
+                use_argmax=use_argmax
+            )
+        selected_kernel_size = self.kernel_list[argmax]
+    else:
+        for i, _ in enumerate(weights):
+            conv_weight, conv_bias = self._compute_weight_and_bias(
+            weights=weights,
+            idx=i,
+            conv_weight=conv_weight,
+            conv_bias=conv_bias,
+            op_id=5,
+            use_argmax=use_argmax
+            )
+        selected_kernel_size = max(self.kernel_list)
+    x = F.conv2d(x,
+                weight=conv_weight,
+                bias=conv_bias if self.op.op[5].bias is not None else None,
+                stride=self.op.op[5].stride,
+                padding=self.get_padding(selected_kernel_size),
+                dilation = self.op.op[5].dilation,
+                groups = self.op.op[5].groups) 
+    x = self.op.op[6](x)
+    x = self.op.op[7](x)
+    return x 
 
 class ReLUConvBN(nn.Module):
 

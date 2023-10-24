@@ -6,27 +6,28 @@ import torch
 import torch.backends.cudnn as cudnn
 import json
 import yaml
+import time
 from random import randint
 from pathlib import Path
 from timm.data import Mixup
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.scheduler import create_scheduler
-from timm.optim import create_optimizer
 from timm.utils import NativeScaler
 from lib.datasets import build_dataset
 from supernet_engine import train_one_epoch, evaluate
 from lib.samplers import RASampler
 from lib import utils
 from lib.config import cfg, update_config_from_file
-from search_spaces.AutoFormer.model_one_shot.supernet_transformer_search import Vision_TransformerSuper
+from search_spaces.AutoFormer.model_one_shot.supernet_transformer_search_2 import Vision_TransformerSuper
 import torch.nn as nn
 import torch.nn.functional as F
 import pickle
 import pandas as pd
 from architect import Architect
 import warnings
-
+from timm_optimizer import create_optimizer
+import wandb
 warnings.filterwarnings('ignore')
 
 
@@ -47,34 +48,19 @@ def optimizer_kwargs(cfg):
         kwargs.update(cfg.opt_args)
     return kwargs
 
+class ConcatDataset(torch.utils.data.Dataset):
+    def __init__(self, *datasets):
+        self.datasets = datasets
 
-class Net(torch.nn.Module):
+    def __getitem__(self, i):
+        return tuple(d[i %len(d)] for d in self.datasets)
 
-    def __init__(self):
-        super().__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
-        self.fc4 = nn.Linear(10, 2)
-
-    def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = torch.flatten(x, 1)  # flatten all dimensions except batch
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
-        x = torch.sum(self.fc4(x), axis=0)
-        return x
-
-
+    def __len__(self):
+        return max(len(d) for d in self.datasets)
 def get_args_parser():
     parser = argparse.ArgumentParser(
         'AutoFormer training and evaluation script', add_help=False)
-    parser.add_argument('--batch-size', default=64, type=int)
+    parser.add_argument('--batch-size', default=128, type=int)
     parser.add_argument('--epochs', default=300, type=int)
     # config file
     parser.add_argument('--cfg',
@@ -356,8 +342,8 @@ def get_args_parser():
         type=str,
         help='dataset path')
     parser.add_argument('--data-set',
-                        default='IMNET',
-                        choices=['CIFAR', 'IMNET', 'INAT', 'INAT19'],
+                        default='CIFAR10',
+                        choices=['CIFAR100','CIFAR10','CIFAR', 'IMNET', 'INAT', 'INAT19'],
                         type=str,
                         help='Image Net dataset path')
     parser.add_argument('--inat-category',
@@ -388,7 +374,7 @@ def get_args_parser():
     parser.add_argument('--prior',
                         action='store_true',
                         help='Use optimizer with prior')
-    parser.add_argument('--num_workers', default=12, type=int)
+    parser.add_argument('--num_workers', default=10, type=int)
     parser.add_argument('--dist-eval',
                         action='store_true',
                         default=False,
@@ -434,7 +420,11 @@ def get_args_parser():
                         action='store_true',
                         default=False,
                         help='use one-step unrolled validation loss')
-    parser.set_defaults(amp=False)
+    parser.add_argument('--use_we_v2',
+                        action='store_true',
+                        default=False,
+                        help='Use we v2')
+    parser.set_defaults(amp=True)
 
     #one shot optimizer args
     parser.add_argument('--tau_max', default=10, type=int, help='Tau max')
@@ -500,11 +490,17 @@ def main(args):
     dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
     dataset_test, _ = build_dataset(is_train=False, args=args)
     ratio = args.ratio
-    dataset_train, dataset_val = torch.utils.data.random_split(
-        dataset_train, [
-            int((1 - ratio) * len(dataset_train)),
-            int(ratio * len(dataset_train))
-        ])
+    len_train = int((ratio) * len(dataset_train))
+    len_val = len(dataset_train) - len_train
+    data_path  = "/path/to/subImageNet"
+    dataset_val, _ = build_dataset(is_train= True, args=args, data_path=data_path)
+    #dataset_train, dataset_val = torch.utils.data.random_split(
+    #    dataset_train, [
+    #        len_train,
+    #        len_val
+    #    ])
+    print('train dataset length: ', len(dataset_train))
+    print('val dataset length: ', len(dataset_val))
     if args.distributed:
         num_tasks = utils.get_world_size()
         global_rank = utils.get_rank()
@@ -519,15 +515,15 @@ def main(args):
                                     shuffle=True)
         else:
             sampler_train = torch.utils.data.DistributedSampler(
-                dataset_train,
+                ConcatDataset(dataset_train,dataset_val),
                 num_replicas=num_tasks,
                 rank=global_rank,
                 shuffle=True)
-            sampler_val = torch.utils.data.DistributedSampler(
+            '''sampler_val = torch.utils.data.DistributedSampler(
                 dataset_val,
                 num_replicas=num_tasks,
                 rank=global_rank,
-                shuffle=True)
+                shuffle=True)'''
         if args.dist_eval:
             if len(dataset_test) % num_tasks != 0:
                 print(
@@ -545,21 +541,14 @@ def main(args):
         sampler_test = torch.utils.data.SequentialSampler(dataset_test)
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
         sampler_val = torch.utils.data.RandomSampler(dataset_val)
+    #dataset = torch.utils.data.TensorDataset(dataset_train, dataset_val)
     data_loader_train = torch.utils.data.DataLoader(
-        dataset_train,
+        ConcatDataset(dataset_train,dataset_val),
         sampler=sampler_train,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
-        drop_last=True,
-    )
-    data_loader_val = torch.utils.data.DataLoader(
-        dataset_val,
-        sampler=sampler_val,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_mem,
-        drop_last=True,
+        drop_last=True
     )
     data_loader_test = torch.utils.data.DataLoader(
         dataset_test,
@@ -583,10 +572,10 @@ def main(args):
 
     print(f"Creating SuperVisionTransformer")
     config = {
-        "embed_dim": [192, 216, 240],
-        "mlp_ratio": [3.5, 4],
+        "embed_dim": [320,384,448],
+        "mlp_ratio": [3.0, 3.5,4.0 ],
         "layer_num": [12, 13, 14],
-        "num_heads": [3, 4]
+        "num_heads": [5, 6, 7]
     }
     model = Vision_TransformerSuper(
         optimizer=args.one_shot_opt,
@@ -605,21 +594,14 @@ def main(args):
         max_relative_position=args.max_relative_position,
         relative_position=args.relative_position,
         change_qkv=args.change_qkv,
-        abs_pos=not args.no_abs_pos)
-    for n, p in model.named_parameters():
-        print(n)
+        abs_pos=not args.no_abs_pos,
+        use_we_v2=args.use_we_v2)
+    #for n, p in model.named_parameters():
+    #    print(n)
     columns = ['embed_dim', 'layer_num', 'epoch']
     for i in range(max(config["layer_num"])):
         columns.append("mlp_ratio_" + str(i))
         columns.append("num_heads_" + str(i))
-    df_archs = pd.DataFrame(columns=columns)
-    df_arch_param_grad = pd.DataFrame(columns=columns)
-    choices = {
-        'num_heads': cfg.SEARCH_SPACE.NUM_HEADS,
-        'mlp_ratio': cfg.SEARCH_SPACE.MLP_RATIO,
-        'embed_dim': cfg.SEARCH_SPACE.EMBED_DIM,
-        'depth': cfg.SEARCH_SPACE.DEPTH
-    }
 
     if args.teacher_model:
         teacher_model = create_model(
@@ -636,21 +618,28 @@ def main(args):
     model_without_ddp = model
     if args.distributed:
         model.to(args.gpu)
-        model = torch.nn.parallel.DistributedDataParallel(
+        if args.one_shot_opt=="gdas":
+            model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[args.gpu], find_unused_parameters=True)
+        else:
+            model = torch.nn.parallel.DistributedDataParallel(
+                model, device_ids=[args.gpu])
         model_without_ddp = model.module
     model.to("cuda")
     #predictor.to("cuda")
     n_parameters = sum(p.numel() for p in model.parameters()
                        if p.requires_grad)
     print('number of params:', n_parameters)
-
     linear_scaled_lr = args.lr * args.batch_size * utils.get_world_size(
     ) / 512.0
+    linear_scaled_arch_lr =  args.arch_learning_rate * args.batch_size * utils.get_world_size(
+    ) / 512.0
     args.lr = linear_scaled_lr
+    args.arch_learning_rate = linear_scaled_arch_lr
     optimizer = create_optimizer(args, model_without_ddp)
 
     loss_scaler = NativeScaler()
+    arch_loss_scaler = NativeScaler()
     lr_scheduler, _ = create_scheduler(args, optimizer)
 
     if args.mixup > 0.:
@@ -663,12 +652,14 @@ def main(args):
 
     output_dir = Path(args.output_dir)
     model_without_ddp._loss = criterion
-    architect = Architect(model_without_ddp, args)
+    architect = Architect(model, model_without_ddp, args)
     if not output_dir.exists():
         output_dir.mkdir(parents=True)
     # save config for later experiments
     with open(output_dir / "config.yaml", 'w') as f:
         f.write(args_text)
+    arch_trajectory = {}
+    args.resume = False
     if args.resume:
         if args.resume.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(args.resume,
@@ -680,6 +671,7 @@ def main(args):
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+            architect.optimizer.load_state_dict(checkpoint["arch_optimizer"])
             args.start_epoch = checkpoint['epoch'] + 1
             if 'scaler' in checkpoint:
                 loss_scaler.load_state_dict(checkpoint['scaler'])
@@ -693,30 +685,39 @@ def main(args):
             'mlp_ratio': cfg.RETRAIN.MLP_RATIO
         }
     if args.eval:
-        test_stats = evaluate(data_loader_test,
+        tau_curr = 0
+        test_stats = evaluate(tau_curr,
+                              data_loader_test,
                               model,
                               device,
-                              mode=args.mode,
-                              retrain_config=retrain_config)
+                              amp=args.amp)
         print(
             f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%"
         )
         return
 
     print("Start training")
+    import time
     start_time = time.time()
     max_accuracy = 0.0
     tau_curr = torch.Tensor([args.tau_max])
     tau_step = (args.tau_min - args.tau_max) / args.epochs
     model.module.sampler.set_taus(args.tau_min, args.tau_max)
     model.module.sampler.set_total_epochs(args.epochs)
-    for p in model.parameters():
-        print(p.shape)
+    #for p in model.parameters():
+    #    print(p.shape)
+    for n,p in model.named_parameters():
+        print(n)
+    #if global_rank == 0:
+    #    wandb_run_name = "autoformer_"+str(args.one_shot_opt)+"_"+str(args.data_set)+"_"+str(args.seed)+"_"+str(args.ratio)+"_"+str(start_time)
+    #    wandb.init(project="autoformer", name=wandb_run_name)
     for epoch in range(args.start_epoch, args.epochs):
+        data_loader_val = None
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
-            data_loader_val.sampler.set_epoch(epoch)
+            #data_loader_val.sampler.set_epoch(epoch)
         model.module.sampler.before_epoch()
+        #data_loader_val = None
         train_stats = train_one_epoch(tau_curr,
                                       args,
                                       architect,
@@ -728,6 +729,7 @@ def main(args):
                                       device,
                                       epoch,
                                       loss_scaler,
+                                      arch_loss_scaler,
                                       args.clip_grad,
                                       mixup_fn,
                                       amp=args.amp,
@@ -736,38 +738,40 @@ def main(args):
         config = model.module.get_best_config()
         config["epoch"] = epoch
         print("best config", config)
-        df_archs = df_archs.append(config, ignore_index=True)
-        df_arch_param_grad = df_arch_param_grad.append(
-            architect.arch_param_grad_dict, ignore_index=True)
-
-        df_archs.to_pickle(str(output_dir) + "/" + 'df_archs.pkl')
-        df_arch_param_grad.to_pickle(
-            str(output_dir) + "/" + 'df_arch_param_grad.pkl')
+        test_stats = evaluate(tau_curr,
+                              data_loader_test,
+                              model,
+                              device,
+                              amp=args.amp)
+        max_accuracy = max(max_accuracy, test_stats["acc1"])
         lr_scheduler.step(epoch)
+        #architect.scheduler.step(epoch)
         if args.output_dir:
             checkpoint_paths = [
                 str(output_dir) + "/" + 'checkpoint_' + str(epoch) + '.pth'
             ]
+            
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master(
                     {
                         'model': model_without_ddp.state_dict(),
                         'optimizer': optimizer.state_dict(),
+                        'arch_optimizer': architect.optimizer.state_dict(),
                         'lr_scheduler': lr_scheduler.state_dict(),
                         'epoch': epoch,
                         'scaler': loss_scaler.state_dict(),
                         'args': args,
                     }, checkpoint_path)
 
-        test_stats = evaluate(tau_curr,
-                              data_loader_test,
-                              model,
-                              device,
-                              amp=args.amp)
+        #if global_rank == 0:
+        #    wandb.log({"train_loss": train_stats['loss']})
+        #    wandb.log({"test_loss": test_stats['loss']})
+        #    wandb.log({"test_acc": test_stats['acc1']})
+
         print(
             f"Accuracy of the network on the {len(dataset_test)} test images: {test_stats['acc1']:.1f}%"
         )
-        max_accuracy = max(max_accuracy, test_stats["acc1"])
+        
         print(f'Max accuracy: {max_accuracy:.2f}%')
         tau_curr += tau_step
         log_stats = {
@@ -781,6 +785,12 @@ def main(args):
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
+        if global_rank == 0:
+            if max_accuracy == test_stats["acc1"]:
+                arch_trajectory[str(epoch)] = config
+                with open(args.output_dir +"/arch_trajectory.pkl", 'wb') as f:
+                    pickle.dump(arch_trajectory, f)
+            
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

@@ -6,7 +6,7 @@ from search_spaces.DARTS.utils import AverageMeter
 from search_spaces.NB201.utils.checkpoints import copy_checkpoint, save_checkpoint
 from search_spaces.NB201.utils.time import time_string
 from search_spaces.NB201.utils import calc_accuracy
-from train.utils import distill
+from utils import distill
 import logging
 
 TrainingMetrics = namedtuple("TrainingMetrics", "loss acc_top1 acc_top5")
@@ -265,7 +265,7 @@ class Trainer:
                     test_inputs = test_inputs.cuda(non_blocking=True)
 
                 # prediction
-                _,_, logits = network(test_inputs)
+                _, logits = network(test_inputs)
                 test_loss = criterion(logits, test_targets)
 
                 # record

@@ -348,7 +348,7 @@ def get_args_parser():
     parser.add_argument(
         '--data-path',
         default=
-        'imagenet/',
+        '/path/to/imagenet/',
         type=str,
         help='dataset path')
     parser.add_argument('--data-set',

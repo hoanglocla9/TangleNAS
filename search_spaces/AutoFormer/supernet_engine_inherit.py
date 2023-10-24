@@ -53,19 +53,14 @@ def train_one_epoch(model: torch.nn.Module,
 
     # set random seed
     random.seed(epoch)
-
+    print("Config: {}".format(retrain_config))
+    model_module = unwrap_model(model)
+    model_module.set_sample_config(retrain_config)
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter(
         'lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
-    if mode == 'retrain':
-        config = retrain_config
-        model_module = unwrap_model(model)
-        print(config)
-        #model_module.set_sample_config(config=config)
-        print(model_module.get_sampled_params_numel(config))
-    count = 0
 
     for samples, targets in metric_logger.log_every(data_loader, print_freq,
                                                     header):
@@ -74,16 +69,6 @@ def train_one_epoch(model: torch.nn.Module,
         targets = targets.to(device, non_blocking=True)
 
         # sample random config
-
-        if mode == 'super':
-            #config = sample_configs(choices=choices)
-            model_module = unwrap_model(model)
-            #model_module.set_sample_config(config=config)
-        elif mode == 'retrain':
-            config = retrain_config
-            model_module = unwrap_model(model)
-            #_sample_config(config=config)
-        prior = "max"
         if mixup_fn is not None:
             samples, targets = mixup_fn(samples, targets)
         if amp:
@@ -159,25 +144,16 @@ def evaluate(data_loader,
              mode='super',
              retrain_config=None):
     criterion = torch.nn.CrossEntropyLoss()
-
+    print("Config: {}".format(retrain_config))
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
 
     # switch to evaluation mode
     model.eval()
-    if mode == 'super':
-        config = sample_configs(choices=choices)
-        model_module = unwrap_model(model)
-        #model_module.set_sample_config(config=config)
-    else:
-        config = retrain_config
-        model_module = unwrap_model(model)
-        #model_module.set_sample_config(config=config)
-
-    print("sampled model config: {}".format(config))
     #parameters = model_module.get_sampled_params_numel(config)
     #print("sampled model parameters: {}".format(parameters))
-
+    model_module = unwrap_model(model)
+    model_module.set_sample_config(retrain_config)
     for images, target in metric_logger.log_every(data_loader, 300, header):
         images = images.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)

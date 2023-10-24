@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from search_spaces.DARTS.operations import *
 from torch.autograd import Variable
-from search_spaces.DARTS.utils import drop_path
+from utils import drop_path
 
 
 class Cell(nn.Module):

@@ -15,6 +15,5 @@ class DRNASSampler(Sampler):
         return sampled_alphas_list
 
     def sample(self, alpha):
-        beta = F.elu(alpha) + 1
-        weights = torch.distributions.dirichlet.Dirichlet(beta).rsample()
+        weights = torch.distributions.dirichlet.Dirichlet(F.elu(alpha.clone(),inplace=False) + 1).rsample()
         return weights

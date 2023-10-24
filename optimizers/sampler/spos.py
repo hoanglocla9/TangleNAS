@@ -11,8 +11,11 @@ class SPOSSampler(Sampler):
             sampled_alphas_list.append(self.sample(alpha, sample_subset))
         return sampled_alphas_list
 
-    def sample_step(self, alphas_list):
-        pass
+    def sample_step(self, alphas_list, sample_subset=False):
+        sampled_alphas_list = []
+        for alpha in alphas_list:
+            sampled_alphas_list.append(self.sample(alpha, sample_subset))
+        return sampled_alphas_list
 
     def sample_indices(self, num_steps, num_selected):
         indices_to_sample = []
@@ -51,3 +54,10 @@ class SPOSSampler(Sampler):
                     choice = np.random.choice(alpha.shape[-1], 1)[0]
                     indices_tensor[i, j, choice] = 1
         return indices_tensor
+
+# test spos
+'''if __name__ == '__main__':
+    alphas = torch.randn([14,8])
+    sampler = SPOSSampler()
+    sampled_alphas = sampler.sample(alphas, sample_subset=True)
+    print(sampled_alphas)'''

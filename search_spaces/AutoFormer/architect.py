@@ -5,8 +5,8 @@ from torch.autograd import Variable
 from torch.distributions.dirichlet import Dirichlet
 from torch.distributions.kl import kl_divergence
 import torch.nn.functional as F
-
-
+from timm.scheduler import create_scheduler
+import time
 def get_contributing_params(y, top_level=True):
     nf = y.grad_fn.next_functions if top_level else y.next_functions
     for f, _ in nf:
@@ -35,14 +35,15 @@ def get_contributing_params(y, top_level=True):
 
 class Architect(object):
 
-    def __init__(self, model, args):
+    def __init__(self, model, model_without_ddp,  args):
         self.network_momentum = args.momentum
         self.network_weight_decay = args.weight_decay
         self.model = model
-        self.optimizer = torch.optim.Adam(self.model.arch_parameters(),
+        self.optimizer = torch.optim.Adam(model_without_ddp.get_arch_parameters(),
                                           lr=args.arch_learning_rate,
                                           betas=(0.5, 0.999),
                                           weight_decay=args.arch_weight_decay)
+        #self.scheduler,_ = create_scheduler(args, self.optimizer)
         self.optimizer_os = args.one_shot_opt
         '''if self.optimizer_os == "drnas":
             self.anchor = Dirichlet(
@@ -75,7 +76,7 @@ class Architect(object):
 
     def _get_kl_reg(self):
         cons = (F.elu(
-            torch.nn.utils.parameters_to_vector(self.model.arch_parameters()))
+            torch.nn.utils.parameters_to_vector(self.model.get_arch_parameters()))
                 + 1)
         q = Dirichlet(cons)
         p = self.anchor
@@ -97,38 +98,37 @@ class Architect(object):
                                          network_optimizer)
         else:
             self._backward_step(input_valid, target_valid, loss_scaler)
-        arch_param_dict = {
-            "embed_dim": self.model._arch_parameters[0],
-            "mlp_ratio": self.model._arch_parameters[1],
-            "num_heads": self.model._arch_parameters[2],
-            "num_layers": self.model._arch_parameters[3]
-        }
-        self.arch_param_grad_dict = {}
-        for name in arch_param_dict.keys():
-            param = arch_param_dict[name]
-            if param.shape[0] > 1:
-                for i in range(param.shape[0]):
-                    grad_norm = param.grad[i].norm()
-                    self.arch_param_grad_dict[name + '_' +
-                                              str(i)] = grad_norm.item()
-            else:
-                grad_norm = param.grad.norm()
-                self.arch_param_grad_dict[name] = grad_norm.item()
+        #self.optimizer.step()
 
-        if not amp:
-            self.optimizer.step()
 
     def _backward_step(self, input_valid, target_valid, loss_scaler):
-        input_labels = self.model(input_valid, tau_curr=self.tau_curr)
-        loss = self.criterion(input_labels, target_valid)  #+ 0.01 * reg
         if self.amp:
+            with torch.cuda.amp.autocast():
+                input_labels = self.model(input_valid, tau_curr=self.tau_curr)
+                loss = self.criterion(input_labels, target_valid)
+        else:
+            # time this
+            #torch.cuda.synchronize()
+            #start = time.time()
+            input_labels = self.model(input_valid, tau_curr=self.tau_curr)
+            #torch.cuda.synchronize()
+            #end = time.time()
+            #print("toral time arch:", start-end)
+            loss = self.criterion(input_labels, target_valid)
+        if self.amp:
+            is_second_order = hasattr(
+                self.optimizer, 'is_second_order') and self.optimizer.is_second_order
             loss_scaler(loss,
                         self.optimizer,
-                        clip_grad=None,
-                        parameters=None,
-                        create_graph=False)
+                        parameters=self.model.module.get_arch_parameters(),
+                        create_graph=is_second_order)
         else:
             loss.backward()
+            #for p in self.model.module.arch_parameters():
+            #    if p.grad is None:
+            #        print("something wrong")
+            self.optimizer.step()
+            #loss_scaler(loss, self.optimizer)
 
     def _backward_step_unrolled(self, input_train, target_train, input_valid,
                                 target_valid, eta, network_optimizer):

@@ -7,14 +7,14 @@ class NetworkBase(ABC, torch.nn.Module):
     def get_weights(self):  # TODO: find a cleaner way to do this
         li = []
         for n, p in self.named_parameters():
-            if ("alpha" not in n) and ("arch" not in n):
+            if ("alpha" not in n) and ("arch" not in n) and p!=None and ("beta" not in n):
                 li.append(p)
         return li
 
     def get_named_weights(self):  # TODO: find a cleaner way to do this
         li = {}
         for n, p in self.named_parameters():
-            if ("alpha" not in n) and ("arch" not in n):
+            if ("alpha" not in n) and ("arch" not in n) and ("beta" not in n):
                 li[n] = p
         for k in li.keys():
             yield (k, li[k])

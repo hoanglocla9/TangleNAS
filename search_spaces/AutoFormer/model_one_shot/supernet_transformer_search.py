@@ -3,17 +3,18 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from model_one_shot.module.Linear_super import LinearSuper, LinearSubRatioEmb
-from model_one_shot.module.layernorm_super import LayerNormSuper, LayerNormSub
+from model_one_shot.module.linear_super import LinearSuper, LinearSubRatioEmb, LinearSubRatioMixture
+from model_one_shot.module.layernorm_super import LayerNormSuper, LayerNormSub, LayerNormMixture
 from model_one_shot.module.multihead_super import AttentionSuper
-from model_one_shot.module.embedding_super import PatchembedSuper, PatchembedSub
+from model_one_shot.module.embedding_super import PatchembedSuper, PatchembedSub, PatchembedMixture
 from model_one_shot.utils import trunc_normal_
 from model_one_shot.utils import DropPath
+import itertools
 import numpy as np
 from typing import Union, Tuple, Any, Callable, Iterator, Set, Optional, overload, TypeVar, Mapping, Dict, List
 from optimizers.mixop.base_mixop import MixOp
 from optimizers.optim_factory import get_mixop, get_sampler
-
+from optimizers.mixop.entangle import EntangledOp
 from torch.autograd import Variable
 
 
@@ -35,6 +36,75 @@ class LayerNormSampled(torch.nn.Module):
                          eps=self.layer.eps)
         if x.shape[-1] != self.super_emb:
             x = F.pad(x, (0, self.super_emb - x.shape[-1]), "constant", 0)
+
+        return x
+
+
+class LayerNormMainMixture(torch.nn.Module):
+
+    def __init__(self, layer: torch.nn.LayerNorm, emb_choice_list: list) -> None:
+        super().__init__()
+        self.layer = layer
+        self.emb_choice_list = emb_choice_list
+        self.max_emb = max(emb_choice_list)
+
+    def _compute_weight_and_bias(self, weights, idx, conv_weight, conv_bias, op_weight, op_bias, use_argmax=False):
+        alpha = weights[idx]
+        emb_size = self.emb_choice_list[idx]
+        start = 0
+        end = start + emb_size
+        # print(op_weight.shape)
+        weight_curr = alpha*op_weight[:end]
+        if not use_argmax:
+            conv_weight += F.pad(weight_curr, (0, self.max_emb-emb_size), "constant", 0)
+        else:
+            conv_weight += weight_curr
+
+        if op_bias is not None:
+            bias = alpha * op_bias[:emb_size]
+            if not use_argmax:
+                conv_bias += F.pad(bias, (0, self.max_emb-emb_size), "constant", 0)
+            else:
+                conv_bias += bias
+
+        return conv_weight, conv_bias
+
+    def compute_weight_and_bias_mixture(self, weights, op_weight, op_bias, use_argmax=False):
+        conv_weight = 0
+        conv_bias = 0
+        if use_argmax == True:
+            argmax = np.array([w.item() for w in weights]).argmax()
+            conv_weight, conv_bias = self._compute_weight_and_bias(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                op_weight=op_weight,
+                op_bias=op_bias,
+                use_argmax=use_argmax
+            )
+        else:
+            for i, _ in enumerate(weights):
+                conv_weight, conv_bias = self._compute_weight_and_bias(
+                    weights=weights,
+                    idx=i,
+                    conv_weight=conv_weight,
+                    conv_bias=conv_bias,
+                    op_weight=op_weight,
+                    op_bias=op_bias,
+                    use_argmax=use_argmax
+                )
+        if op_bias == None:
+            conv_bias = op_bias
+        return conv_weight, conv_bias
+
+    def forward(self, x: torch.Tensor, weights: torch.Tensor, use_argmax=False) -> torch.Tensor:
+        weight, bias = self.compute_weight_and_bias_mixture(
+            weights, self.layer.weight, self.layer.bias, use_argmax=use_argmax)
+        x = F.layer_norm(x, (x.shape[-1], ),
+                         weight=weight,
+                         bias=bias,
+                         eps=self.layer.eps)
 
         return x
 
@@ -66,6 +136,71 @@ class LinearSampled(torch.nn.Module):
         weight = self.layer.weight[:, :self.emb_choice]
         bias = self.layer.bias
         x = F.linear(x[:, :self.emb_choice], weight=weight, bias=bias)
+        return x
+
+
+class LinearMixture(torch.nn.Module):
+
+    def __init__(self, layer: torch.nn.Linear, emb_choice_list: list) -> None:
+        super().__init__()
+        self.emb_choice_list = emb_choice_list
+        self.max_emb = max(emb_choice_list)
+        self.layer = layer
+
+    def _compute_weight_and_bias(self, weights, idx, conv_weight, conv_bias, op_weight, op_bias, use_argmax=False):
+        alpha = weights[idx]
+        emb_size = self.emb_choice_list[idx]
+        start = 0
+        end = start + emb_size
+        # print(op_weight.shape)
+        weight_curr = alpha * op_weight[:, :end]
+        if not use_argmax:
+            conv_weight += F.pad(weight_curr, (0, self.max_emb-emb_size, 0, 0), "constant", 0)
+        else:
+            conv_weight += weight_curr
+
+        if op_bias is not None:
+            bias = op_bias
+            conv_bias = bias
+
+        return conv_weight, conv_bias
+
+    def compute_weight_and_bias_mixture(self, weights, op_weight, op_bias, use_argmax=False):
+        conv_weight = 0
+        conv_bias = 0
+        if use_argmax == True:
+            argmax = np.array([w.item() for w in weights]).argmax()
+            conv_weight, conv_bias = self._compute_weight_and_bias(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                op_weight=op_weight,
+                op_bias=op_bias,
+                use_argmax=use_argmax
+            )
+        else:
+            for i, _ in enumerate(weights):
+                conv_weight, conv_bias = self._compute_weight_and_bias(
+                    weights=weights,
+                    idx=i,
+                    conv_weight=conv_weight,
+                    conv_bias=conv_bias,
+                    op_weight=op_weight,
+                    op_bias=op_bias,
+                    use_argmax=use_argmax
+                )
+        if op_bias == None:
+            conv_bias = op_bias
+        return conv_weight, conv_bias
+
+    def forward(self, x: torch.Tensor, weights: torch.Tensor, use_argmax=False) -> torch.Tensor:
+        # print(x.shape)
+        # print(self.layer.weight.shape)
+        # print(self.layer.bias.shape)
+        weight, bias = self.compute_weight_and_bias_mixture(
+            weights, self.layer.weight, self.layer.bias, use_argmax=use_argmax)
+        x = F.linear(x, weight=weight, bias=bias)
         return x
 
 
@@ -106,7 +241,7 @@ class EmbedMask(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         mask = torch.zeros([self.super_emb], device=x.device)
         mask[:self.emb_choice] = 1
-        #print(x.shape)
+        # print(x.shape)
         return x * mask
 
 
@@ -134,15 +269,17 @@ class Vision_TransformerSuper(nn.Module):
                  relative_position: bool = False,
                  change_qkv: bool = False,
                  abs_pos: bool = True,
-                 max_relative_position: int = 14) -> None:
+                 max_relative_position: int = 14,
+                 use_we_v2: bool = False) -> None:
         super(Vision_TransformerSuper, self).__init__()
         # the configs of super arch
         # self.super_embed_dim = args.embed_dim
         self.config = config
         self._initialize_alphas()
-        self.mixop = get_mixop(optimizer)
+        self.mixop = get_mixop(optimizer, use_we_v2=use_we_v2)
         self.sampler = get_sampler(optimizer)
         self.img_size = img_size
+        self.use_we_v2 = use_we_v2
         self.change_qkv = change_qkv
         self.max_relative_position = max_relative_position
         self.super_embed_dim = max(self.config["embed_dim"])
@@ -157,7 +294,7 @@ class Vision_TransformerSuper(nn.Module):
         self.scale = scale
         self.qkv_bias = qkv_bias
         self.optimizer = optimizer
-        self.patch_embed_super = PatchembedSuper(
+        patch_embed_super = PatchembedSuper(
             img_size=img_size,
             patch_size=patch_size,
             in_chans=in_chans,
@@ -166,14 +303,19 @@ class Vision_TransformerSuper(nn.Module):
             abs_pos=abs_pos,
             super_dropout=self.super_dropout,
             pre_norm=pre_norm)
-        self.patch_emb_op_list = [
-            PatchembedSub(self.patch_embed_super, e)
-            for e in self.config["embed_dim"]
-        ]
+        if self.use_we_v2:
+            self.op_emb = PatchembedMixture(
+                patch_embed_super, emb_choice_list=self.config["embed_dim"])
+            self.patch_emb_op_list = self._init_entangled_op(
+                self.op_emb, choices=self.config["embed_dim"], op_name="patch_embed")
+        else:
+            self.patch_emb_op_list = torch.nn.ModuleList([
+                PatchembedSub(patch_embed_super, e)
+                for e in self.config["embed_dim"]])
 
         self.relative_position = relative_position
         self.gp = gp
-        #self.optimizer = optimizer
+        # self.optimizer = optimizer
         self.blocks = nn.ModuleList()
         self.drop_path_rate = drop_path_rate
         dpr = [
@@ -197,67 +339,73 @@ class Vision_TransformerSuper(nn.Module):
                     scale=self.scale,
                     change_qkv=change_qkv,
                     relative_position=relative_position,
-                    max_relative_position=max_relative_position))
+                    max_relative_position=max_relative_position,
+                    use_we_v2=use_we_v2))
 
         # parameters for vision transformer
-        num_patches = self.patch_embed_super.num_patches
+        num_patches = patch_embed_super.num_patches
         self.abs_pos = abs_pos
-        #if self.abs_pos:
+        # if self.abs_pos:
         #    self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1,self.super_embed_dim))
         #    trunc_normal_(self.pos_embed, std=.02)
 
-        #self.cls_token = nn.Parameter(torch.zeros(1, 1, self.super_embed_dim))
-        #trunc_normal_(self.cls_token, std=.02)
+        # self.cls_token = nn.Parameter(torch.zeros(1, 1, self.super_embed_dim))
+        # trunc_normal_(self.cls_token, std=.02)
 
         # self.pos_drop = nn.Dropout(p=drop_rate)
         if self.pre_norm:
-            self.norm = LayerNormSuper(super_embed_dim=self.super_embed_dim)
-            self.norm_emb_op_list = [
-                LayerNormSampled(self.norm, e, self.super_embed_dim)
-                for e in self.config["embed_dim"]
-            ]
+            norm = LayerNormSuper(super_embed_dim=self.super_embed_dim)
+            if self.use_we_v2:
+                self.op_norm = LayerNormMainMixture(norm, self.config["embed_dim"])
+                self.norm_emb_op_list = self._init_entangled_op(
+                    self.op_norm, self.config["embed_dim"], "layer_norm")
+            else:
+                self.norm_emb_op_list = [
+                    LayerNormSampled(norm, e, self.super_embed_dim)
+                    for e in self.config["embed_dim"]]
 
         # classifier head
-        self.gp_op_list = [
-            GPSampled(e, self.super_embed_dim)
-            for e in self.config["embed_dim"]
-        ]
-        self.head = LinearSuper(
+        if not self.use_we_v2:
+            self.gp_op_list = [
+                GPSampled(e, self.super_embed_dim)
+                for e in self.config["embed_dim"]]
+        head = LinearSuper(
             self.super_embed_dim,
             num_classes) if num_classes > 0 else nn.Identity()
-        self.head_op_list = [
-            LinearSampled(self.head, e, self.super_embed_dim)
-            for e in self.config["embed_dim"]
-        ]
+        if self.use_we_v2:
+            self.op_head = LinearMixture(head, self.config["embed_dim"])
+            self.head_op_list = self._init_entangled_op(
+                self.op_head, self.config["embed_dim"], "embed_dim")
+        else:
+            self.head_op_list = torch.nn.ModuleList([
+                LinearSampled(head, e, self.super_embed_dim)
+                for e in self.config["embed_dim"]
+            ])
         self.apply(self._init_weights)
+
+    def _init_entangled_op(self, op, choices, op_name):
+        ops = [EntangledOp(op=None, name=op_name)
+               for i in choices[:-1]] + [EntangledOp(op=op, name=op_name)]
+        return ops
+
+    def _init_entangled_op_cross(self, op, choices1, choices2, op_name):
+        choices_cross = list(itertools.product(choices1, choices2))
+        ops = [EntangledOp(op=None, name=op_name)
+               for i, j in choices_cross[:-1]] + [EntangledOp(op=op, name=op_name)]
+        return ops
 
     def _initialize_alphas(self) -> None:
 
-        self.alphas_embed_dim = Variable(
-            1e-3 * torch.randn(1, len(self.config["embed_dim"])).cuda(),
-            requires_grad=True)  #.cuda()#torch.nn.Parameter(
-        #1e-3 * torch.randn(1, len(self.config["embed_dim"])),
-        #    requires_grad=True)
-        self.alphas_mlp_ratio = Variable(
-            1e-3 * torch.randn(max(self.config["layer_num"]),
-                               len(self.config["mlp_ratio"])).cuda(),
-            requires_grad=True)  #.cuda()
-        #torch.nn.Parameter(1e-3 * torch.randn(
-        #    max(self.config["layer_num"]), len(self.config["mlp_ratio"])),
-        #                                           requires_grad=True)
-        self.alphas_num_heads = Variable(
-            1e-3 * torch.randn(max(self.config["layer_num"]),
-                               len(self.config["num_heads"])).cuda(),
-            requires_grad=True)  #.cuda()
-        #torch.nn.Parameter(1e-3 * torch.randn(
-        #    max(self.config["layer_num"]), len(self.config["num_heads"])),
-        #                                           requires_grad=True)
-        self.alphas_layer_num = Variable(
-            1e-3 * torch.randn(1, len(self.config["layer_num"])).cuda(),
+        self.alphas_embed_dim = torch.nn.Parameter(
+        1e-3 * torch.randn(1, len(self.config["embed_dim"])),
+        requires_grad=True)
+        self.alphas_mlp_ratio = torch.nn.Parameter(1e-3 * torch.randn(
+            max(self.config["layer_num"]), len(self.config["mlp_ratio"])),
             requires_grad=True)
-        #torch.nn.Parameter(
-        #    1e-3 * torch.randn(1, len(self.config["layer_num"])),
-        #    requires_grad=True)
+        self.alphas_num_heads = torch.nn.Parameter(1e-3 * torch.randn(max(self.config["layer_num"]), len(self.config["num_heads"])),
+                                                   requires_grad=True)
+        self.alphas_layer_num = torch.nn.Parameter(
+            1e-3 * torch.randn(1, len(self.config["layer_num"])), requires_grad=True)
         self._arch_parameters = [
             self.alphas_embed_dim, self.alphas_mlp_ratio,
             self.alphas_num_heads, self.alphas_layer_num
@@ -365,23 +513,42 @@ class Vision_TransformerSuper(nn.Module):
             x = blk(x, i, weights_embed_dim, weights_mlp_ratio,
                     weights_num_heads)
             i = i + 1
+            print(x)
             if i in self.config["layer_num"]:
                 x_list.append(x)
-            #print(torch.cuda.memory_allocated("cuda"))
+            # print(torch.cuda.memory_allocated("cuda"))
         x = self.mixop.forward_depth(x_list, weight_layer_num[0])
         # print(time.time()-start_time)
         if self.pre_norm:
-            #print(x.shape)
+            # print(x.shape)
             x = self.mixop.forward(x, weights_embed_dim[0],
                                    self.norm_emb_op_list)
 
         if self.gp:
-            return self.mixop.forward(
-                x, weights_embed_dim[0],
-                self.gp_op_list)  # TODO check what happens here?
+            if not self.use_we_v2:
+                return self.mixop.forward(
+                    x, weights_embed_dim[0],
+                    self.gp_op_list)  # TODO check what happens here?
+            else:
+                x = torch.mean(x[:, :, :][:, 1:], dim=1)
+                return x
 
         return x[:, 0]
+    
+    def get_arch_parameters(self) -> list:
+        return self._arch_parameters
+    
+    def get_network_parameters(self) -> list:
+        network_params = set(self.parameters())-set(self._arch_parameters)
+        return list(network_params)
 
+    def get_named_network_parameters(self) -> dict:
+        named_network_params = {}
+        for name, param in self.named_parameters():
+            if "arch" not in name:
+                named_network_params[name] = param
+        return named_network_params
+    
     def forward(self,
                 x: torch.Tensor,
                 tau_curr: torch.Tensor,
@@ -412,7 +579,7 @@ class Vision_TransformerSuper(nn.Module):
                         str(d)] = self.config["mlp_ratio"][torch.argmax(
                             self.alphas_mlp_ratio[d], dim=-1)]
         return best_config
-
+                
 
 class TransformerEncoderLayer(nn.Module):
     """Encoder layer block.
@@ -437,7 +604,8 @@ class TransformerEncoderLayer(nn.Module):
                  scale: bool = False,
                  relative_position: bool = False,
                  change_qkv: bool = False,
-                 max_relative_position: int = 14) -> None:
+                 max_relative_position: int = 14,
+                 use_we_v2: bool = False) -> None:
         super().__init__()
 
         # the configs of super arch of the encoder, three dimension [embed_dim, mlp_ratio, and num_heads]
@@ -447,6 +615,7 @@ class TransformerEncoderLayer(nn.Module):
         self.super_num_heads = num_heads
         self.normalize_before = pre_norm
         self.super_dropout = attn_drop
+        self.use_we_v2 = use_we_v2
         self.mixop = mixop
         self.drop_path = DropPath(
             drop_path) if drop_path > 0. else nn.Identity()
@@ -475,78 +644,113 @@ class TransformerEncoderLayer(nn.Module):
                                    scale=self.scale,
                                    relative_position=self.relative_position,
                                    change_qkv=change_qkv,
-                                   max_relative_position=max_relative_position)
-        self.embed_mask = [
-            EmbedMask(e, self.super_embed_dim)
-            for e in self.config["embed_dim"]
-        ]
-        self.attn_layer_norm = LayerNormSuper(self.super_embed_dim)
-        self.attn_layer_norm_list_before = [
-            LayerNormSub(self.attn_layer_norm,
-                         e,
-                         self.super_embed_dim,
-                         pre_norm,
-                         before=True) for e in self.config["embed_dim"]
-        ]
-        self.attn_layer_norm_list_after = [
-            LayerNormSub(self.attn_layer_norm,
-                         e,
-                         self.super_embed_dim,
-                         pre_norm,
-                         after=True) for e in self.config["embed_dim"]
-        ]
-        self.ffn_layer_norm = LayerNormSuper(self.super_embed_dim)
-        self.ffn_layer_norm_list_before = [
-            LayerNormSub(self.ffn_layer_norm,
-                         e,
-                         self.super_embed_dim,
-                         pre_norm,
-                         before=True) for e in self.config["embed_dim"]
-        ]
-        self.ffn_layer_norm_list_after = [
-            LayerNormSub(self.ffn_layer_norm,
-                         e,
-                         self.super_embed_dim,
-                         pre_norm,
-                         after=True) for e in self.config["embed_dim"]
-        ]
-        self.dropout_op_list = [
-            DropoutSampled(e, self.super_embed_dim, dropout)
-            for e in self.config["embed_dim"]
-        ]
+                                   max_relative_position=max_relative_position,
+                                   use_we_v2=use_we_v2)
+        if not self.use_we_v2:
+            self.embed_mask = torch.nn.ModuleList([
+                EmbedMask(e, self.super_embed_dim)
+                for e in self.config["embed_dim"]])
+        attn_layer_norm = LayerNormSuper(self.super_embed_dim)
+        if self.use_we_v2:
+            self.op_attn_layer_norm = LayerNormMixture(
+                attn_layer_norm, self.config["embed_dim"], pre_norm, before=True)
+            self.attn_layer_norm_list_before = self._init_entangled_op(
+                self.op_attn_layer_norm, self.config["embed_dim"], "embed_dim")
+        else:
+            self.attn_layer_norm_list_before = torch.nn.ModuleList([
+                LayerNormSub(attn_layer_norm,
+                             e,
+                             self.super_embed_dim,
+                             pre_norm,
+                             before=True) for e in self.config["embed_dim"]])
+        if self.use_we_v2:
+            self.op_ln = LayerNormMixture(
+                attn_layer_norm, self.config["embed_dim"], pre_norm, after=True)
+            self.attn_layer_norm_list_after = self._init_entangled_op(
+                self.op_ln, self.config["embed_dim"], "embed_dim")
+        else:
+            self.attn_layer_norm_list_after = torch.nn.ModuleList([
+                LayerNormSub(attn_layer_norm,
+                             e,
+                             self.super_embed_dim,
+                             pre_norm,
+                             after=True) for e in self.config["embed_dim"]])
+        ffn_layer_norm = LayerNormSuper(self.super_embed_dim)
+        if self.use_we_v2:
+            self.op_ffn_ln = LayerNormMixture(
+                ffn_layer_norm, self.config["embed_dim"], pre_norm, before=True)
+            self.ffn_layer_norm_list_before = self._init_entangled_op(
+                self.op_ffn_ln, self.config["embed_dim"], "embed_dim")
+        else:
+            self.ffn_layer_norm_list_before = torch.nn.ModuleList([
+                LayerNormSub(ffn_layer_norm,
+                             e,
+                             self.super_embed_dim,
+                             pre_norm,
+                             before=True) for e in self.config["embed_dim"]])
+        if self.use_we_v2:
+            self.op_ffn_ln2 = LayerNormMixture(
+                ffn_layer_norm, self.config["embed_dim"], pre_norm, after=True)
+            self.ffn_layer_norm_list_after = self._init_entangled_op(
+                self.op_ffn_ln2, self.config["embed_dim"], "embed_dim")
+        else:
+            self.ffn_layer_norm_list_after = torch.nn.ModuleList([
+                LayerNormSub(ffn_layer_norm,
+                             e,
+                             self.super_embed_dim,
+                             pre_norm,
+                             after=True) for e in self.config["embed_dim"]])
+        if not self.use_we_v2:
+            self.dropout_op_list = [
+                DropoutSampled(e, self.super_embed_dim, dropout)
+                for e in self.config["embed_dim"]]
 
-        self.fc1 = LinearSuper(
+        fc1 = LinearSuper(
             super_in_dim=self.super_embed_dim,
             super_out_dim=self.super_ffn_embed_dim_this_layer)
-        self.emb_ratio_op_fc1_list = []
-        for e in self.config["embed_dim"]:
-            for r in self.config["mlp_ratio"]:
-                self.emb_ratio_op_fc1_list.append(
-                    LinearSubRatioEmb(
-                        self.fc1, self.super_embed_dim,
-                        self.super_embed_dim * self.super_mlp_ratio, e, r))
+        if self.use_we_v2:
+            self.op_linear_mix = LinearSubRatioMixture(
+                fc1, self.config["embed_dim"], self.config["mlp_ratio"])
+            self.emb_ratio_op_fc1_list = self._init_entangled_op_cross(
+                self.op_linear_mix, self.config["embed_dim"], self.config["mlp_ratio"], "embed_mlpratio")
+        else:
+            self.emb_ratio_op_fc1_list = torch.nn.ModuleList()
+            for e in self.config["embed_dim"]:
+                for r in self.config["mlp_ratio"]:
+                    self.emb_ratio_op_fc1_list.append(
+                        LinearSubRatioEmb(
+                            fc1, self.super_embed_dim,
+                            self.super_embed_dim * self.super_mlp_ratio, e, r))
 
-        self.dropout_op_list_fc1 = []
-        for e in self.config["embed_dim"]:
-            for r in self.config["mlp_ratio"]:
-                self.dropout_op_list_fc1.append(
-                    DropoutSampled(int(e * r),
-                                   self.super_ffn_embed_dim_this_layer,
-                                   dropout))
-        self.fc2 = LinearSuper(
+        if not self.use_we_v2:
+            self.dropout_op_list_fc1 = torch.nn.ModuleList()
+            for e in self.config["embed_dim"]:
+                for r in self.config["mlp_ratio"]:
+                    self.dropout_op_list_fc1.append(
+                        DropoutSampled(int(e * r),
+                                       self.super_ffn_embed_dim_this_layer,
+                                       dropout))
+
+        fc2 = LinearSuper(
             super_in_dim=self.super_ffn_embed_dim_this_layer,
             super_out_dim=self.super_embed_dim)
-        self.emb_ratio_op_fc2_list = []
-        for e in self.config["embed_dim"]:
-            for r in self.config["mlp_ratio"]:
-                self.emb_ratio_op_fc2_list.append(
-                    LinearSubRatioEmb(self.fc2,
-                                      self.super_embed_dim,
-                                      self.super_embed_dim *
-                                      self.super_mlp_ratio,
-                                      e,
-                                      r,
-                                      reverse=True))
+        if self.use_we_v2:
+            self.op_linear_mix_2 = LinearSubRatioMixture(
+                fc2, self.config["embed_dim"], self.config["mlp_ratio"], reverse=True)
+            self.emb_ratio_op_fc2_list = self._init_entangled_op_cross(
+                self.op_linear_mix_2, self.config["embed_dim"], self.config["mlp_ratio"], "embed_mlpratio")
+        else:
+            self.emb_ratio_op_fc2_list = torch.nn.ModuleList()
+            for e in self.config["embed_dim"]:
+                for r in self.config["mlp_ratio"]:
+                    self.emb_ratio_op_fc2_list.append(
+                        LinearSubRatioEmb(fc2,
+                                          self.super_embed_dim,
+                                          self.super_embed_dim *
+                                          self.super_mlp_ratio,
+                                          e,
+                                          r,
+                                          reverse=True))
         self.activation_fn = gelu
         self.relu = torch.nn.ReLU()
 
@@ -563,16 +767,20 @@ class TransformerEncoderLayer(nn.Module):
         """
         if self.is_identity_layer:
             return x
-        residual = self.mixop.forward(x, weights_embed_dim[0], self.embed_mask)
+        residual = x
         x = self.mixop.forward(x, weights_embed_dim[0],
                                self.attn_layer_norm_list_before)
         x = self.attn(x, id, weights_embed_dim, weights_num_heads)
-        x = self.mixop.forward(x, weights_embed_dim[0], self.dropout_op_list)
+        if self.use_we_v2:
+            x = F.dropout(x, p=self.super_dropout, training=self.training)
+        else:
+            x = self.mixop.forward(
+                x, weights_embed_dim[0], self.dropout_op_list)
         x = self.drop_path(x)
         x = residual + x
         x = self.mixop.forward(x, weights_embed_dim[0],
                                self.attn_layer_norm_list_after)
-        residual = self.mixop.forward(x, weights_embed_dim[0], self.embed_mask)
+        residual = x
         x = self.mixop.forward(x, weights_embed_dim[0],
                                self.ffn_layer_norm_list_before)
         weights = [weights_embed_dim[0], weights_mlp_ratio[id]]
@@ -581,22 +789,40 @@ class TransformerEncoderLayer(nn.Module):
                                self.emb_ratio_op_fc1_list,
                                combi=True)
         x = self.activation_fn(x)
-        x = self.mixop.forward(x,
-                               weights,
-                               self.dropout_op_list_fc1,
-                               combi=True)
+        if self.use_we_v2:
+            x = F.dropout(x, p=self.super_dropout, training=self.training)
+        else:
+            x = self.mixop.forward(x,
+                                   weights,
+                                   self.dropout_op_list_fc1,
+                                   combi=True)
         x = self.mixop.forward(x,
                                weights,
                                self.emb_ratio_op_fc2_list,
                                combi=True)
-        x = self.mixop.forward(x, weights_embed_dim[0], self.dropout_op_list)
-        if self.scale:
+        if self.use_we_v2:
+            x = F.dropout(x, p=self.super_dropout, training=self.training)
+        else:
+            x = self.mixop.forward(
+                x, weights_embed_dim[0], self.dropout_op_list)
+        if self.scale and not self.use_we_v2:
             x = x * (self.super_mlp_ratio / self.sample_mlp_ratio)
         x = self.drop_path(x)
         x = residual + x
         x = self.mixop.forward(x, weights_embed_dim[0],
                                self.ffn_layer_norm_list_after)
         return x
+
+    def _init_entangled_op(self, op, choices, op_name):
+        ops = [EntangledOp(op=None, name=op_name)
+               for i in choices[:-1]] + [EntangledOp(op=op, name=op_name)]
+        return ops
+
+    def _init_entangled_op_cross(self, op, choices1, choices2, op_name):
+        choices_cross = list(itertools.product(choices1, choices2))
+        ops = [EntangledOp(op=None, name=op_name)
+               for i, j in choices_cross[:-1]] + [EntangledOp(op=op, name=op_name)]
+        return ops
 
     def maybe_layer_norm(self,
                          layer_norm: torch.nn.LayerNorm,
@@ -619,6 +845,8 @@ class TransformerEncoderLayer(nn.Module):
         total_flops += self.fc1.get_complexity(sequence_length + 1)
         total_flops += self.fc2.get_complexity(sequence_length + 1)
         return total_flops
+    
+
 
 
 def calc_dropout(dropout: float, sample_embed_dim: int,

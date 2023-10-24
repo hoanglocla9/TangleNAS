@@ -10,10 +10,6 @@ class SearchNetworkBase(NetworkBase):
         pass
 
     @abstractmethod
-    def _initialize_anchors(self):
-        pass
-
-    @abstractmethod
     def new(self):
         pass
 

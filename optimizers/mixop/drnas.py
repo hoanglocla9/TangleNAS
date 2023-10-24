@@ -1,9 +1,9 @@
 from optimizers.mixop.base_mixop import MixOp
 import torch
-
+import torch.nn.functional as F
 from optimizers.mixop.entangle import EntangleMixOp
 
-
+from optimizers.mixop.entangle import EntangleMixOp, EntangledOp
 class DRNASMixOp(MixOp):
 
     def preprocess_weights(self, weights):
@@ -21,11 +21,15 @@ class DRNASMixOp(MixOp):
         for w, op in zip(weights, ops):
             out = out + w * op(x)
         params = 0
+
+
         if add_params == True:
             for w, op in zip(weights, ops):
                 params = params + w * op.get_parameters()
+
             return out, params
         else:
+
             return out
 
     def forward_progressive(self,
@@ -134,3 +138,28 @@ class DRNASMixOpV2(EntangleMixOp):
 
     def preprocess_weights(self, weights):
         return weights
+    
+    def preprocess_combi(self, weights):
+        out = 0
+        if len(weights) == 2:
+            out = weights[0].reshape(weights[0].shape[0], 1) @ weights[1].reshape(1, weights[1].shape[0])
+            out = out.flatten()
+        elif len(weights) == 3:
+            out = weights[0].reshape(weights[0].shape[0], 1) @ weights[1].reshape(1, weights[1].shape[0])
+            out = out.flatten()
+            out = out.reshape(out.shape[0], 1) @ weights[2].reshape(1, weights[2].shape[0])
+            out = out.flatten()
+        return out
+        
+    def forward_depth(self, x_list, weights, params_list=[], add_params=False):
+        out = 0
+
+        for w, x in zip(weights, x_list):
+            out = out + w * x
+        params = 0
+        if add_params == True:
+            for w, param in zip(weights, params_list):
+                params = params + w * param
+            return out, params
+        else:
+            return out

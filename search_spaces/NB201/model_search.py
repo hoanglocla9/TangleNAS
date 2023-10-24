@@ -8,6 +8,7 @@ from search_spaces.NB201.operations import OPS, ReLUConvBNSubSample, ResNetBasic
 from search_spaces.base_model_search import SearchNetworkBase
 from torch.distributions.kl import kl_divergence
 import torch.nn.functional as F
+import numpy as np
 
 DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device(
     'cpu')
@@ -27,10 +28,11 @@ class NB201MixedOpV2Wrapper(nn.Module):
             if primitive == 'nor_conv_1x1':
                 self._ops[primitive] = EntangledOp(op=None, name='nor_conv')
             elif primitive == 'nor_conv_3x3':
-                op_mixture = ReLUConvBNMixture(op, kernel_sizes=(1, 3))
+                op_mixture = ReLUConvBNMixture(op, kernel_sizes=(3, 1))
                 self._ops[primitive] = EntangledOp(op=op_mixture, name='nor_conv')
             else:
                 self._ops[primitive] = op
+        #print(list(self._ops.values()))
 
     def forward(self, x, weights):
         return self.mixop.forward(x, weights, list(self._ops.values()))
@@ -218,17 +220,15 @@ class NASBench201SearchSpace(SearchNetworkBase):
                  criterion,
                  reg_type='l2',
                  reg_scale=1e-3,
-                 path_to_benchmark = '.',
+                 path_to_benchmark = '/work/dlclarge1/sukthank-transformer_search/reproduce_oneshot/DrNAS/201-space/NAS-Bench-201-v1_0-e61699.pth',
                  entangle_weights=True,
                  initialize_api = True,
-                 use_we_v2=False):
+                 use_we_v2=False,
+                 track_gradients=False):
         super(NASBench201SearchSpace, self).__init__()
         self.optimizer_type = optimizer_type
         self.sampler = get_sampler(optimizer_type)
         self.op_names = deepcopy(list(reversed(search_space)))
-
-        if use_we_v2 is True:
-            self.op_names = list(reversed(self.op_names))
 
         self._C = C
         self._N = N
@@ -244,6 +244,8 @@ class NASBench201SearchSpace(SearchNetworkBase):
         self.reg_scale = reg_scale
         self.entangle_weights = entangle_weights
         self.use_we_v2 = use_we_v2
+        self.track_gradients = track_gradients
+
         layer_channels = [C] * N + [C * 2] + [C * 2] * N + [C * 4
                                                             ] + [C * 4] * N
         layer_reductions = [False] * N + [True] + [False] * N + [
@@ -276,7 +278,9 @@ class NASBench201SearchSpace(SearchNetworkBase):
                             == cell.edge2index), "invalid {:} vs. {:}.".format(
                                 num_edge, cell.num_edges)
 
-            if self.entangle_weights == True and isinstance(cell, NAS201SearchCell):
+            if self.track_gradients is True \
+                and self.entangle_weights is True \
+                and isinstance(cell, NAS201SearchCell):
                 cell.register_backward_hooks()
 
             self.cells.append(cell)
@@ -284,13 +288,15 @@ class NASBench201SearchSpace(SearchNetworkBase):
         self.num_edge = num_edge
         self._Layer = len(self.cells)
         self.edge2index = edge2index
+        self.type = "base"
         self.lastact = nn.Sequential(nn.BatchNorm2d(C_prev),
                                      nn.ReLU(inplace=True))
         self.global_pooling = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Linear(C_prev, num_classes)
         self.path_to_benchmark = path_to_benchmark
-        if initialize_api:
-           self.api = API(path_to_benchmark)
+        #if initialize_api:
+        #   self.api = API(path_to_benchmark)
+        self.api = None
         self._initialize_alphas()
         self._initialize_anchors()
 
@@ -373,7 +379,6 @@ class NASBench201SearchSpace(SearchNetworkBase):
         return kl_reg
 
     def new(self):
-
         model_new = NASBench201SearchSpace(
             self.optimizer_type,
             C=self._C,
@@ -389,7 +394,9 @@ class NASBench201SearchSpace(SearchNetworkBase):
             path_to_benchmark=self.path_to_benchmark,
             entangle_weights = self.entangle_weights,
             initialize_api=False,
-            use_we_v2=self.use_we_v2).to(DEVICE)
+            use_we_v2=self.use_we_v2
+        ).to(DEVICE)
+
         for x, y in zip(model_new.arch_parameters(), self.arch_parameters()):
             x.data.copy_(y.data)
 
@@ -442,10 +449,58 @@ class NASBench201SearchSpace(SearchNetworkBase):
         for cell in self.cells:
             if isinstance(cell, NAS201SearchCell):
                 cell.is_architect_step = value
+
+    def make_alphas_for_genotype(self, genotype):
+        ops = [i for g in genotype.tolist("")[0] for i in g]
+        alphas = torch.zeros_like(self.arch_parameters()[0])
+
+        for idx, op in enumerate(ops):
+            alphas[idx][self.op_names.index(op[0])] = 1.0
+
+        return alphas
+
+    def set_alphas_for_genotype(self, genotype):
+        alphas = self.make_alphas_for_genotype(genotype)
+        self.arch_parameters()[0].data = alphas.data
+
+    def sample(self):
+        self._initialize_alphas()
+        genotype = self.genotype()
+        self.set_alphas_for_genotype(genotype)
+        return genotype
+
+    def mutate(self, p=0.5):
+        new_alphas = torch.zeros_like(self.arch_parameters()[0])
+
+        for idx, row in enumerate(self.arch_parameters()[0]):
+            if np.random.rand() < p:
+                new_op = np.random.randint(0, new_alphas.shape[1])
+                new_alphas[idx][new_op] = 1.0
+            else:
+                new_alphas[idx] = row.detach()
+
+        self.arch_parameters()[0].data = new_alphas.data
+        return self.genotype()
+
+    def crossover(self, other_genotype, p=0.5):
+        new_alphas = torch.zeros_like(self.arch_parameters()[0])
+        other_alphas = self.make_alphas_for_genotype(other_genotype)
+
+        for idx, row in enumerate(self.arch_parameters()[0]):
+            if np.random.rand() < p:
+                new_alphas[idx] = row.detach()
+            else:
+                new_alphas[idx] = other_alphas[idx].detach()
+
+        self.arch_parameters()[0].data = new_alphas.data
+        return self.genotype()
+
 #tests
-#from search_spaces.NB201.operations import NAS_BENCH_201 as NB201_SEARCH_SPACE
-#model = NASBench201SearchSpace("darts",16,5,4,10,NB201_SEARCH_SPACE,0,0,torch.nn.CrossEntropyLoss())
-#model.arch_parameters()[0]=model.arch_parameters()[0]*2
-#print(model.arch_parameters())
-#print(model.genotype())
-#torch.save(model.state_dict(), ".")
+# from search_spaces.NB201.operations import NAS_BENCH_201 as NB201_SEARCH_SPACE
+# model = NASBench201SearchSpace("darts_v1",16,5,4,10,NB201_SEARCH_SPACE,0,0,torch.nn.CrossEntropyLoss(),use_we_v2=True)
+# model.arch_parameters()[0]=model.arch_parameters()[0]*2
+# print(model.arch_parameters())
+# print(model.genotype())
+# input = torch.randn(2, 3, 32, 32)
+# out, logits = model(input)
+#torch.save(model.state_dict(), "/work/dlclarge1/sukthank-transformer_search/GraViT-E/model_nb201.path")

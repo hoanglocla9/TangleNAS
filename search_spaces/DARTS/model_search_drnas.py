@@ -10,7 +10,7 @@ from optimizers.optim_factory import get_mixop, get_sampler
 from search_spaces.base_model_search import SearchNetworkBase
 from torch.distributions.dirichlet import Dirichlet
 from torch.distributions.kl import kl_divergence
-
+from optimizers.mixop.entangle import EntangledOp
 
 def channel_shuffle(x, groups):
     batchsize, num_channels, height, width = x.data.size()
@@ -22,6 +22,80 @@ def channel_shuffle(x, groups):
     x = x.view(batchsize, -1, height, width)
     return x
 
+class DARTSMixedOpV2Wrapper(nn.Module):
+
+    def __init__(self,C, stride, k, mixop, entangle_weights=True):
+        super(DARTSMixedOpV2Wrapper, self).__init__()
+        self._ops = torch.nn.ModuleDict()
+        self.k = k
+        self.mp = nn.MaxPool2d(2, 2)
+        self.C = C
+        self.mixop = mixop
+        self.entangle_weights = entangle_weights
+
+        if entangle_weights == True:
+            self._init_entangled_ops(C, stride)
+        else:
+            self._init_ops(C, stride)
+
+    def _init_entangled_ops(self, C, stride):
+        for primitive in PRIMITIVES:
+
+            if primitive == 'sep_conv_5x5':
+                op_mixture = SepConvMixture(OPS[primitive](int(C // self.k), stride, False), [3,5], 5)
+                self._ops[primitive] = EntangledOp(op=op_mixture, name='sep_conv')
+            elif primitive == 'dil_conv_5x5':
+                op_mixture = DilConvMixture(OPS[primitive](int(C // self.k), stride, False), [3,5], 5)
+                self._ops[primitive] = EntangledOp(op=op_mixture, name='dil_conv')
+            elif primitive == 'sep_conv_3x3':
+                self._ops[primitive] = EntangledOp(op=None, name='sep_conv')
+            elif primitive == 'dil_conv_3x3':
+                self._ops[primitive] = EntangledOp(op=None, name='dil_conv')
+            else:
+                op = OPS[primitive](int(C // self.k), stride, False)
+                #if 'pool' in primitive:
+                #    op = nn.Sequential(op, nn.BatchNorm2d(C, affine=False))
+                self._ops[primitive] = op
+        
+
+    def _init_ops(self, C, stride):
+        for primitive in PRIMITIVES:
+            op = OPS[primitive](C, stride, False)
+            if 'pool' in primitive:
+                op = nn.Sequential(op, nn.BatchNorm2d(C, affine=False))
+            self._ops[primitive] = op
+
+    def forward(self, x, weights):
+        dim_2 = x.shape[1]
+        xtemp = x[:, :int(dim_2 // self.k), :, :]
+        xtemp2 = x[:, int(dim_2 // self.k):, :, :]
+        #temp1 = sum(w * op(xtemp) for w, op in zip(weights, self._ops) if not w == 0)
+        #print(self._ops.values())
+        temp1 = self.mixop.forward_progressive(xtemp, weights.to(x.device),
+                                               self._ops.values())
+        if self.k == 1:
+            return temp1
+        #reduction cell needs pooling before concat
+        if temp1.shape[2] == x.shape[2]:
+            ans = torch.cat([temp1, xtemp2], dim=1)
+        else:
+            ans = torch.cat([temp1, self.mp(xtemp2)], dim=1)
+        ans = channel_shuffle(ans, self.k)
+        #ans = torch.cat([ans[ : ,  dim_2//4:, :, :],ans[ : , :  dim_2//4, :, :]],dim=1)
+        #except channe shuffle, channel shift also works
+        return ans
+
+    def __repr__(self):
+        s = f'Operations {list(self._ops.keys())}'
+        if self.entangle_weights == True:
+            s += ' with entangled weights'
+
+        return s
+
+    def wider(self, k):
+        self.k = k
+        for op in self._ops.keys():
+            self._ops[op].wider(self.C // k, self.C // k)
 
 class DARTSMixedOpWrapper(nn.Module):
 
@@ -75,11 +149,11 @@ class DARTSMixedOpWrapper(nn.Module):
 class Cell(nn.Module):
 
     def __init__(self, optimizer_type, steps, multiplier, C_prev_prev, C_prev,
-                 C, reduction, reduction_prev, k):
+                 C, reduction, reduction_prev, k, use_we_v2):
         super(Cell, self).__init__()
         self.reduction = reduction
         self.k = k
-        self.mixop = get_mixop(optimizer_type)
+        self.mixop = get_mixop(optimizer_type,use_we_v2=use_we_v2)
         if reduction_prev:
             self.preprocess0 = FactorizedReduce(C_prev_prev, C, affine=False)
         else:
@@ -98,7 +172,10 @@ class Cell(nn.Module):
         for i in range(self._steps):
             for j in range(2 + i):
                 stride = 2 if reduction and j < 2 else 1
-                op = DARTSMixedOpWrapper(C, stride, self.k, self.mixop)
+                if use_we_v2:
+                    op = DARTSMixedOpV2Wrapper(C, stride, self.k, self.mixop)
+                else:
+                    op = DARTSMixedOpWrapper(C, stride, self.k, self.mixop)
                 self._ops.append(op)
 
     def forward(self, s0, s1, weights):
@@ -134,7 +211,8 @@ class DARTSSearchSpaceDrNAS(SearchNetworkBase):
                  stem_multiplier=3,
                  k=6,
                  reg_type='l2',
-                 reg_scale=1e-3):
+                 reg_scale=1e-3,
+                 use_we_v2=False):
         super(DARTSSearchSpaceDrNAS, self).__init__()
         self._C = C
         self._num_classes = num_classes
@@ -163,7 +241,7 @@ class DARTSSearchSpaceDrNAS(SearchNetworkBase):
             else:
                 reduction = False
             cell = Cell(self.optimizer_type, steps, multiplier, C_prev_prev,
-                        C_prev, C_curr, reduction, reduction_prev, k)
+                        C_prev, C_curr, reduction, reduction_prev, k, use_we_v2)
             reduction_prev = reduction
             self.cells += [cell]
             C_prev_prev, C_prev = C_prev, multiplier * C_curr

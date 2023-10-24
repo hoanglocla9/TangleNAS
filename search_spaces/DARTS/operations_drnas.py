@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from search_spaces.DARTS.net2wider import InChannelWider, OutChannelWider, BNWider
-
+import numpy as np
 OPS = {
     'none':
     lambda C, stride, affine: Zero(stride),
@@ -33,7 +33,184 @@ OPS = {
         nn.BatchNorm2d(C, affine=affine)),
 }
 
+class DilConvMixture(nn.Module):
+    
+  def __init__(self, op, kernel_size_list, kernel_max):
+    super(DilConvMixture, self).__init__()
+    self.op = op
+    self.kernel_list = kernel_size_list
+    self.kernel_max = kernel_max
 
+  def _compute_weight_and_bias(self, weights, idx, conv_weight, conv_bias):
+        alpha = weights[idx]
+
+        kernel_size = self.kernel_list[idx]
+        start = 0 + (self.kernel_max - kernel_size) // 2
+        end = start + kernel_size
+        weight_curr = self.op.op[1].weight[:, :, start:end, start:end]
+        conv_weight += alpha * F.pad(weight_curr, (start, start, start, start), "constant", 0)
+
+        if self.op.op[1].bias is not None:
+            conv_bias += alpha * self.op.op[1].bias
+
+        return conv_weight, conv_bias
+
+  def forward(self, input, weights, use_argmax = False):
+        x = input
+        x = self.op.op[0](x)
+        conv_weight = 0
+        conv_bias = 0
+        if use_argmax == True:
+            argmax = np.array([w.item() for w in weights]).argmax()
+            conv_weight, conv_bias = self._compute_weight_and_bias(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias
+            )
+        else:
+            for i, _ in enumerate(weights):
+                conv_weight, conv_bias = self._compute_weight_and_bias(
+                    weights=weights,
+                    idx=i,
+                    conv_weight=conv_weight,
+                    conv_bias=conv_bias
+                )
+        x = F.conv2d(x,
+                weight=conv_weight,
+                bias=conv_bias if self.op.op[1].bias is not None else None,
+                stride=self.op.op[1].stride,
+                padding=self.op.op[1].padding[0],
+                dilation = self.op.op[1].dilation,
+                groups = self.op.op[1].groups)  
+        x = self.op.op[2](x)   
+        x = self.op.op[3](x)
+        return x
+
+  def wider(self, new_C_in, new_C_out):
+        conv1 = self.op.op[1]
+        conv2 = self.op.op[2]
+        bn = self.op.op[3]
+        conv1, index = OutChannelWider(conv1, new_C_out)
+        conv1.groups = new_C_in
+        conv2, _ = InChannelWider(conv2, new_C_in, index=index)
+        conv2, index = OutChannelWider(conv2, new_C_out)
+        bn, _ = BNWider(bn, new_C_out, index=index)
+        self.op.op[1] = conv1
+        self.op.op[2] = conv2
+        self.op.op[3] = bn
+
+
+class SepConvMixture(nn.Module):
+    
+  def __init__(self, op, kernel_size_list, kernel_max):
+    super(SepConvMixture, self).__init__()
+    self.op = op
+    self.kernel_list = kernel_size_list
+    self.kernel_max = kernel_max
+
+  def _compute_weight_and_bias(self, weights, idx, conv_weight, conv_bias, op_id):
+    alpha = weights[idx]
+
+    kernel_size = self.kernel_list[idx]
+    start = 0 + (self.kernel_max - kernel_size) // 2
+    end = start + kernel_size
+    weight_curr = self.op.op[op_id].weight[:, :, start:end, start:end]
+    conv_weight += alpha * F.pad(weight_curr, (start, start, start, start), "constant", 0)
+
+    if self.op.op[1].bias is not None:
+        conv_bias += alpha * self.op.op[op_id].bias
+
+    return conv_weight, conv_bias
+
+  def forward(self, input, weights , use_argmax=False ):
+    x = input
+    x = self.op.op[0](x)
+    conv_weight = 0
+    conv_bias = 0
+    if use_argmax == True:
+        argmax = np.array([w.item() for w in weights]).argmax()
+        conv_weight, conv_bias = self._compute_weight_and_bias(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                op_id=1
+            )
+    else:
+        for i, _ in enumerate(weights):
+            conv_weight, conv_bias = self._compute_weight_and_bias(
+            weights=weights,
+            idx=i,
+            conv_weight=conv_weight,
+            conv_bias=conv_bias,
+            op_id=1
+            )
+    x = F.conv2d(x,
+                weight=conv_weight,
+                bias=conv_bias if self.op.op[1].bias is not None else None,
+                stride=self.op.op[1].stride,
+                padding=self.op.op[1].padding[0],
+                dilation = self.op.op[1].dilation,
+                groups = self.op.op[1].groups)  
+    x = self.op.op[2](x)   
+    x = self.op.op[3](x)
+    x = self.op.op[4](x)
+    conv_weight = 0
+    conv_bias = 0
+    if use_argmax == True:
+        argmax = np.array([w.item() for w in weights]).argmax()
+        conv_weight, conv_bias = self._compute_weight_and_bias(
+                weights=weights,
+                idx=argmax,
+                conv_weight=conv_weight,
+                conv_bias=conv_bias,
+                op_id=5
+            )
+    else:
+        for i, _ in enumerate(weights):
+            conv_weight, conv_bias = self._compute_weight_and_bias(
+            weights=weights,
+            idx=i,
+            conv_weight=conv_weight,
+            conv_bias=conv_bias,
+            op_id=5
+            )
+    x = F.conv2d(x,
+                weight=conv_weight,
+                bias=conv_bias if self.op.op[5].bias is not None else None,
+                stride=self.op.op[5].stride,
+                padding=self.op.op[5].padding[0],
+                dilation = self.op.op[5].dilation,
+                groups = self.op.op[5].groups) 
+    x = self.op.op[6](x)
+    x = self.op.op[7](x)
+    return x
+
+  def wider(self, new_C_in, new_C_out):
+        conv1 = self.op.op[1]
+        conv2 = self.op.op[2]
+        conv3 = self.op.op[5]
+        conv4 = self.op.op[6]
+        bn1 = self.op.op[3]
+        bn2 = self.op.op[7]
+        conv1, index = OutChannelWider(conv1, new_C_out)
+        conv1.groups = new_C_in
+        conv2, _ = InChannelWider(conv2, new_C_in, index=index)
+        conv2, index = OutChannelWider(conv2, new_C_out)
+        bn1, _ = BNWider(bn1, new_C_out, index=index)
+
+        conv3, index = OutChannelWider(conv3, new_C_out)
+        conv3.groups = new_C_in
+        conv4, _ = InChannelWider(conv4, new_C_in, index=index)
+        conv4, index = OutChannelWider(conv4, new_C_out)
+        bn2, _ = BNWider(bn2, new_C_out, index=index)
+        self.op.op[1] = conv1
+        self.op.op[2] = conv2
+        self.op.op[5] = conv3
+        self.op.op[6] = conv4
+        self.op.op[3] = bn1
+        self.op.op[7] = bn2
 class AvgPoolBN(nn.Module):
 
     def __init__(self, C_out, stride):
