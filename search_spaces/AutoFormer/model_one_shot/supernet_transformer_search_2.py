@@ -198,9 +198,15 @@ class LinearMixture(torch.nn.Module):
         # print(x.shape)
         # print(self.layer.weight.shape)
         # print(self.layer.bias.shape)
+        idx = np.array([w.item() for w in weights]).argmax()
+        alpha = weights[idx]
+        emb_size = self.emb_choice_list[idx]
         weight, bias = self.compute_weight_and_bias_mixture(
             weights, self.layer.weight, self.layer.bias, use_argmax=use_argmax)
-        x = F.linear(x, weight=weight, bias=bias)
+        if not use_argmax:
+            x = F.linear(x, weight=weight, bias=bias)
+        else:
+            x = F.linear(x[:,:emb_size], weight=weight, bias=bias)
         return x
 
 
