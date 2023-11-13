@@ -136,7 +136,10 @@ class HeadMaskAttnMixture(nn.Module):
         
         #print(weights[idx])
         B, N, _ = x.shape
-        x_temp = x.reshape(B, N, 3, self.max_heads, -1).permute(2, 0, 3, 1, 4)
+        if not use_argmax:
+            x_temp = x.reshape(B, N, 3, self.max_heads, -1).permute(2, 0, 3, 1, 4)
+        else:
+            x_temp = x.reshape(B, N, 3, head_choice, -1).permute(2, 0, 3, 1, 4)
         #print("X first line sum", torch.sum(x[0]))
         B, N, _, _, _ = x_temp.shape
         qkv = x_temp
