@@ -35,6 +35,6 @@ else
     we_v2_flag=""
 fi
 
-python_cmd="python -m search.experiment_search --dataset ${dataset} --optimizer ${optimizer} --searchspace ${search_space} --seed ${seed} ${submission_flag} ${we_flag} ${we_v2_flag} --path_to_benchmark /work/dlclarge2/sukthank-tanglenas/NAS-Bench-201-v1_0-e61699.pth --train_portion ${train_portion} --data_path /path/to/ImageNet16"
+python_cmd="python -m search.experiment_search --dataset ${dataset} --optimizer ${optimizer} --searchspace ${search_space} --seed ${seed} ${submission_flag} ${we_flag} ${we_v2_flag} --path_to_benchmark /path/to/NAS-Bench-201-v1_0-e61699.pth --train_portion ${train_portion} --data_path /path/to/ImageNet16"
 
 eval $python_cmd

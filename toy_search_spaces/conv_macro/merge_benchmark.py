@@ -1,7 +1,7 @@
 import pickle
 a = {}
 for i in range(1,81):
-    benchmark_file_name = "/work/dlclarge2/sukthank-tanglenas/merge/TangleNAS-dev/toy_search_spaces/conv_macro/benchmark_dictionary_"+str(i)+".pkl"
+    benchmark_file_name = "/paht/to/benchmark_dictionary_"+str(i)+".pkl"
     print("Reading file = " + benchmark_file_name)
     with open(benchmark_file_name, 'rb') as f:
         b = pickle.load(f)

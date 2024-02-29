@@ -203,7 +203,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # get the archs
-    with open("/work/dlclarge2/sukthank-tanglenas/merge/TangleNAS-dev/toy_search_spaces/conv_macro/results/arch_choices.pkl", "rb") as f:
+    with open("/path/to/arch_choices.pkl", "rb") as f:
         arch_list = pickle.load(f)
 
     # load arch evaluated 
@@ -212,7 +212,7 @@ if __name__ == '__main__':
     train_queue, valid_queue, test_queue = cifar_loader.get_dataloaders(batch_size=64)
     # train all the archs
     # copy the archs_evaluated to benchmark
-    args.benchmark_file_name = "/work/dlclarge2/sukthank-tanglenas/merge/TangleNAS-dev/toy_search_spaces/conv_macro/results/"+args.benchmark_file_name
+    args.benchmark_file_name = "/path/to/"+args.benchmark_file_name
     # check if the file exists
     if not os.path.exists(args.benchmark_file_name):
         benchmark = {}

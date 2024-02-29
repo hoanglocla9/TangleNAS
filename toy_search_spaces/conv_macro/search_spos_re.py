@@ -658,7 +658,7 @@ def get_args_parser():
     parser.add_argument('--amp', action='store_true')
     parser.add_argument('--no-amp', action='store_false', dest='amp')
     parser.add_argument('--train_portion', default=0.8, type=float, help='portion of training data')
-    parser.add_argument('--model_path', default='/work/dlclarge2/sukthank-tanglenas/merge/TangleNAS-dev/out_train_spos_spos_9004_0.8/ckpt.pt', type=str, help='path to pretrained model')
+    parser.add_argument('--model_path', default='/path/to/model/ckpt.pt', type=str, help='path to pretrained model')
     parser.set_defaults(amp=True)
 
     return parser

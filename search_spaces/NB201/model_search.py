@@ -220,7 +220,7 @@ class NASBench201SearchSpace(SearchNetworkBase):
                  criterion,
                  reg_type='l2',
                  reg_scale=1e-3,
-                 path_to_benchmark = '/work/dlclarge1/sukthank-transformer_search/reproduce_oneshot/DrNAS/201-space/NAS-Bench-201-v1_0-e61699.pth',
+                 path_to_benchmark = '/path/to/bench',
                  entangle_weights=True,
                  initialize_api = True,
                  use_we_v2=False,
@@ -495,12 +495,3 @@ class NASBench201SearchSpace(SearchNetworkBase):
         self.arch_parameters()[0].data = new_alphas.data
         return self.genotype()
 
-#tests
-# from search_spaces.NB201.operations import NAS_BENCH_201 as NB201_SEARCH_SPACE
-# model = NASBench201SearchSpace("darts_v1",16,5,4,10,NB201_SEARCH_SPACE,0,0,torch.nn.CrossEntropyLoss(),use_we_v2=True)
-# model.arch_parameters()[0]=model.arch_parameters()[0]*2
-# print(model.arch_parameters())
-# print(model.genotype())
-# input = torch.randn(2, 3, 32, 32)
-# out, logits = model(input)
-#torch.save(model.state_dict(), "/work/dlclarge1/sukthank-transformer_search/GraViT-E/model_nb201.path")
