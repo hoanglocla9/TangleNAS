@@ -220,7 +220,11 @@ class NASBench201SearchSpace(SearchNetworkBase):
                  criterion,
                  reg_type='l2',
                  reg_scale=1e-3,
+<<<<<<< HEAD
                  path_to_benchmark = '/path/to/bench',
+=======
+                 path_to_benchmark = '/path/to/NAS-Bench-201-v1_0-e61699.pth',
+>>>>>>> 9f4b5b84d7f3547c835ba81757ef4e286ab2ac3e
                  entangle_weights=True,
                  initialize_api = True,
                  use_we_v2=False,
@@ -495,3 +499,7 @@ class NASBench201SearchSpace(SearchNetworkBase):
         self.arch_parameters()[0].data = new_alphas.data
         return self.genotype()
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 9f4b5b84d7f3547c835ba81757ef4e286ab2ac3e

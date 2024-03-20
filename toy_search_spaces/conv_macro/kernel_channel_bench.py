@@ -212,7 +212,7 @@ if __name__ == '__main__':
     train_queue, valid_queue, test_queue = cifar_loader.get_dataloaders(batch_size=64)
     # train all the archs
     # copy the archs_evaluated to benchmark
-    args.benchmark_file_name = "/path/to/"+args.benchmark_file_name
+    args.benchmark_file_name = "/path/to/results/"+args.benchmark_file_name
     # check if the file exists
     if not os.path.exists(args.benchmark_file_name):
         benchmark = {}

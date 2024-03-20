@@ -23,7 +23,11 @@ parser.add_argument(
     '--data',
     type=str,
     default=
+<<<<<<< HEAD
     '/path/to/imagenet',
+=======
+    '/path/to/imagenet/',
+>>>>>>> 9f4b5b84d7f3547c835ba81757ef4e286ab2ac3e
     help='location of the data corpus')
 parser.add_argument('--batch_size', type=int, default=128, help='batch size')
 parser.add_argument('--learning_rate',
@@ -149,7 +153,11 @@ def main():
         model = model.cuda()
     for n, p in model.named_parameters():
         print(n)
+<<<<<<< HEAD
     path = "/path/to/model"
+=======
+    path = "/path/to/eval-EXP-20221024-061254/model_best.pth.tar"
+>>>>>>> 9f4b5b84d7f3547c835ba81757ef4e286ab2ac3e
     model.load_state_dict(torch.load(path)["state_dict"])
     logging.info("param size = %fMB", utils.count_parameters_in_MB(model))
 

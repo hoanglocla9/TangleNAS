@@ -128,7 +128,11 @@ class RandomSearch(NASOptimizer):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
+<<<<<<< HEAD
     parser.add_argument('--model_path', type=str, default="/path/to/model.pth")
+=======
+    parser.add_argument('--model_path', type=str, default="/path/to/ckpt.pt")
+>>>>>>> 9f4b5b84d7f3547c835ba81757ef4e286ab2ac3e
     parser.add_argument('--n_iters', type=int, default=10000)
     parser.add_argument('--train_portion', type=float, default=0.8)
     args = parser.parse_args()

@@ -87,7 +87,11 @@ parser.add_argument(
     '--load_path',
     type=str,
     default=
+<<<<<<< HEAD
     '/path/to/weights',
+=======
+    '/path/to/weights.pt',
+>>>>>>> 9f4b5b84d7f3547c835ba81757ef4e286ab2ac3e
     help='path to inherit from')
 
 args = parser.parse_args()

@@ -445,13 +445,21 @@ def get_args_parser():
     parser.add_argument(
         '--model_path',
         default=
+<<<<<<< HEAD
         "/path/to/model",
+=======
+        "/path/to/checkpoint.pth",
+>>>>>>> 9f4b5b84d7f3547c835ba81757ef4e286ab2ac3e
         type=str,
         help='pretrained_model_path')
     parser.add_argument(
         '--df_path',
         default=
+<<<<<<< HEAD
         "/path/to/arch_traj",
+=======
+        "/path/to/TangleNAS-dev/output_cifar10_darts_1000_0_8_224_we2/arch_trajectory.pkl",
+>>>>>>> 9f4b5b84d7f3547c835ba81757ef4e286ab2ac3e
         type=str,
         help='architecture path')
 
