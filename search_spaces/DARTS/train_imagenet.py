@@ -23,7 +23,7 @@ parser.add_argument(
     '--data',
     type=str,
     default=
-    '/work/dlclarge2/sukthank-naslib_one_shot/Cream/AutoFormer/imagenet/',
+    '/path/to/imagenet/',
     help='location of the data corpus')
 parser.add_argument('--batch_size', type=int, default=128, help='batch size')
 parser.add_argument('--learning_rate',
@@ -149,10 +149,7 @@ def main():
         model = model.cuda()
     for n, p in model.named_parameters():
         print(n)
-    #print(torch.load("/work/dlclarge1/sukthank-transformer_search/code/OneShotNASwithWE/eval-EXP-20221024-062321/checkpoint.pth.tar"))
-    #path_darts= "/work/dlclarge1/sukthank-transformer_search/code/OneShotNASwithWE/eval-EXP-20221024-062321/model_best.pth.tar"
-    #path = "/work/dlclarge1/sukthank-transformer_search/code/OneShotNASwithWE/eval-EXP-20221024-062237/model_best.pth.tar"
-    path = "/work/dlclarge1/sukthank-transformer_search/code/OneShotNASwithWE/eval-EXP-20221024-061254/model_best.pth.tar"
+    path = "/path/to/eval-EXP-20221024-061254/model_best.pth.tar"
     model.load_state_dict(torch.load(path)["state_dict"])
     logging.info("param size = %fMB", utils.count_parameters_in_MB(model))
 

@@ -38,7 +38,7 @@ parser.add_argument(
     '--model_path',
     type=str,
     default=
-    '/work/dlclarge1/sukthank-transformer_search/code/OneShotNASwithWE/eval-EXP-20221025-074234/weights.pt',
+    '/path/to/weights.pt',
     help='path of pretrained model')
 parser.add_argument('--auxiliary',
                     action='store_true',

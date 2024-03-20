@@ -172,11 +172,11 @@ class RunManager:
                 with open(latest_fname, "w") as fout:
                     fout.write(model_fname + "\n")
             print("=> loading checkpoint '{}'".format(model_fname))
-            checkpoint = torch.load("/pfs/work7/workspace/scratch/fr_rs1131-tanglenas/TangleNAS-dev/experiments/mobilenet_drnas/mobilenetv3_drnas_alternating_9001__e129.pth.tar", map_location="cpu")
+            checkpoint = torch.load("/path/to/mobilenet_drnas/mobilenetv3_drnas_alternating_9001__e129.pth.tar", map_location="cpu")
         except Exception:
             print("fail to load checkpoint from %s" % self.save_path)
             return {}
-        checkpoint = torch.load("/pfs/work7/workspace/scratch/fr_rs1131-tanglenas/TangleNAS-dev/experiments/mobilenet_drnas/mobilenetv3_drnas_alternating_9001__e129.pth.tar", map_location="cpu")
+        checkpoint = torch.load("/path/to/mobilenet_drnas/mobilenetv3_drnas_alternating_9001__e129.pth.tar", map_location="cpu")
         self.network.load_state_dict(checkpoint["state_dict"])
         if "epoch" in checkpoint:
             self.start_epoch = checkpoint["epoch"] + 1

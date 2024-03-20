@@ -73,8 +73,6 @@ def infer(valid_loader, model, criterion, device):
 
 
 def main(args):
-    #with open("/work/dlclarge2/sukthank-ZCP_Competition/10/ex10-NAS2/src/benchmark_dictionary.pkl","rb") as f:
-    #    benchmark_dictionary = pickle.load(f)
     benchmark_dictionary = {}
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")      

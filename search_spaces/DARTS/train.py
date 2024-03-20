@@ -87,7 +87,7 @@ parser.add_argument(
     '--load_path',
     type=str,
     default=
-    '/work/dlclarge1/sukthank-transformer_search/fresh_install/OneShotNASwithWE/experiments_drnas/cifar10/search-progressive-exp-20221210-115548-666-init_channels-36-layers-20-init_pc-6/weights.pt',
+    '/path/to/weights.pt',
     help='path to inherit from')
 
 args = parser.parse_args()

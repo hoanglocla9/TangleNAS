@@ -240,7 +240,7 @@ class RandomSearch(NASOptimizer):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_path', type=str, default="/work/dlclarge2/sukthank-llama/tanglenas_checkpoints/all_models/out_search_spos_0.8_9001_6000_20230828-174230/latest_ckpt.pt")
+    parser.add_argument('--model_path', type=str, default="/path/to/latest_ckpt.pt")
     parser.add_argument('--n_iters', type=int, default=5000)
     parser.add_argument('--train_portion', type=float, default=0.5)
     parser.add_argument('--optimizer', type=str, default="spos")

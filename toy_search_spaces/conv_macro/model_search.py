@@ -11,7 +11,7 @@ import itertools
 from optimizers.mixop.entangle import EntangledOp
 class ConvNetMacroSpace(NetworkBase):
     
-    def __init__(self, optimizer_type="darts_v1", api="/work/dlclarge2/sukthank-tanglenas/merge/TangleNAS-dev/toy_search_spaces/conv_macro/benchmark_all_archs_final.pkl", use_we_v2=False):
+    def __init__(self, optimizer_type="darts_v1", api="/path/to/benchmark_all_archs_final.pkl", use_we_v2=False):
         super(ConvNetMacroSpace,self).__init__()
         
         conv1 = nn.Conv2d(in_channels=3,out_channels=32,kernel_size=(7,7),stride=1, padding=3)

@@ -147,7 +147,7 @@ class NASBench201SearchSpace(SearchNetworkBase):
         self.global_pooling = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Linear(C_prev, num_classes)
         if load_api:
-            self.api = API("/work/dlclarge1/sukthank-transformer_search/reproduce_oneshot/DrNAS/201-space/NAS-Bench-201-v1_0-e61699.pth")
+            self.api = API("/path/to/NAS-Bench-201-v1_0-e61699.pth")
         self._initialize_alphas()
         self._initialize_anchors()
         

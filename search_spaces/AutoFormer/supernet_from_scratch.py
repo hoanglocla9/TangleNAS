@@ -445,13 +445,13 @@ def get_args_parser():
     parser.add_argument(
         '--model_path',
         default=
-        "/work/dlclarge2/sukthank-tanglenas/TangleNAS-dev/output_cifar10_darts_1000_0_8_224_we2/checkpoint_1310.pth",
+        "/path/to/checkpoint.pth",
         type=str,
         help='pretrained_model_path')
     parser.add_argument(
         '--df_path',
         default=
-        "/work/dlclarge2/sukthank-tanglenas/TangleNAS-dev/output_cifar10_darts_1000_0_8_224_we2/arch_trajectory.pkl",
+        "/path/to/TangleNAS-dev/output_cifar10_darts_1000_0_8_224_we2/arch_trajectory.pkl",
         type=str,
         help='architecture path')
 

@@ -22,7 +22,7 @@ import argparse
 import os
 import yaml
 # Encoder: take a string, output a list of integers
-with open('/work/dlclarge2/sukthank-tanglenas/merge/TangleNAS-dev/toy_search_spaces/nanoGPT/data/shakespeare_char/input.txt', 'r', encoding='utf-8') as f:
+with open('/path/to/input.txt', 'r', encoding='utf-8') as f:
     text = f.read()
 # Checking all the unique characters that occur in this tex
 chars = sorted(list(set(text)))
@@ -108,7 +108,7 @@ class EvolutionSearcher(object):
         self.top_losses = []
         self.cand_params = []
         self.choices = choices
-        with open('/work/dlclarge2/sukthank-tanglenas/merge/TangleNAS-dev/toy_search_spaces/nanoGPT/data/shakespeare_char/input.txt', 'r', encoding='utf-8') as f:
+        with open('/path/to/input.txt', 'r', encoding='utf-8') as f:
             text = f.read()
         # Checking all the unique characters that occur in this tex
         chars = sorted(list(set(text)))
@@ -562,7 +562,7 @@ def get_args_parser():
     parser.add_argument('--no-amp', action='store_false', dest='amp')
     parser.add_argument('--optimizer', default='spos', type=str, help='optimizer')
     parser.add_argument('--train_portion', default=0.5, type=float, help='portion of training data')
-    parser.add_argument('--model_path', default='/work/dlclarge2/sukthank-tanglenas/TangleNAS-dev/model_one_shot_spos_0_8.pth', type=str, help='path to pretrained model')
+    parser.add_argument('--model_path', default='/path/to/model_one_shot_spos_0_8.pth', type=str, help='path to pretrained model')
     parser.set_defaults(amp=True)
 
     return parser
