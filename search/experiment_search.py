@@ -304,7 +304,7 @@ class Experiment:
         project_name = "tanglenas-submission" if self.submission is True else "tanglenas-prototype"
 
         wandb.init(project=project_name,
-                   entity="nas-team-freiburg", name=self.name)
+                   entity="your-team", name=self.name)
         self.logger = Logger(log_dir=self.log_dir,
                              seed=self.seed,
                              exp_name=f'{self.name}-{wandb.run.id}')
