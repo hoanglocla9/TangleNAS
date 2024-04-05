@@ -762,7 +762,7 @@ if __name__ == '__main__':
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     project_name = "tanglenas-submission-autoformer"
-    wandb.init(project=project_name, entity="nas-team-freiburg")
+    wandb.init(project=project_name, entity="project-team")
     wandb.config.update(vars(args))
 
     main(args)

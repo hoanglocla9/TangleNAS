@@ -400,7 +400,7 @@ if wandb_log and master_process:
     import wandb
 
     wandb_run_name = f"TinyStories_trainmodel_{search_optimizer}_{search_train_portion}_{config_string}_{args.max_iters}_{args.seed}"
-    wandb.init(project=wandb_project, name=wandb_run_name, entity='nas-team-freiburg', config=config)
+    wandb.init(project=wandb_project, name=wandb_run_name, entity='your-team', config=config)
 
 # training loop
 X, Y = get_batch("train")  # fetch the very first batch

@@ -229,18 +229,6 @@ def main(args):
     )
 
 
-    #if global_rank == 0:
-    #    #project_name = "tanglenas-submission"
-    #    #name = f"we2_mobilenetv3_{args.one_shot_opt}_imagenet_{args.seed}"
-    #    #wandb.init(project=project_name, entity="nas-team-freiburg", name=name)
-    #    #wandb.config.update(args.__dict__)
-    #    #wandb.config.seed = args.seed
-    #    #wandb.watch(net.module)
-
-    #try:
-    #    run_name = wandb.run.name
-    #    run_id = wandb.run.id
-    #except Exception:
     run_name = f"mobilenetv3_{args.one_shot_opt}_{args.opt_strategy}_{args.seed}"
     run_id = ""
 
