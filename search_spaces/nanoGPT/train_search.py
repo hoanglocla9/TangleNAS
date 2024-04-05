@@ -337,7 +337,7 @@ if wandb_log and master_process:
     import wandb
 
     wandb_run_name = f"tinystories_{optimizer}_{train_portion}_{seed}_{max_iters}"
-    wandb.init(project=wandb_project, name=wandb_run_name, entity='nas-team-freiburg', config=config)
+    wandb.init(project=wandb_project, name=wandb_run_name, entity='your-team', config=config)
 
 # training loop
 unwrapped_model.sampler.set_taus(0.1, 10)  # Required only for GDAS
