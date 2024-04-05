@@ -495,7 +495,3 @@ class NASBench201SearchSpace(SearchNetworkBase):
         self.arch_parameters()[0].data = new_alphas.data
         return self.genotype()
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 9f4b5b84d7f3547c835ba81757ef4e286ab2ac3e
