@@ -11,9 +11,6 @@ from datasets.data import (
     FASHIONMNISTData
 )
 # TODO: Handle v1 and v2
-from search_spaces.NATS.model_search_v1 import NATSSearchSpaceV1
-from search_spaces.NATS.model_search_v2 import NATSSearchSpaceV2
-from search_spaces.NATS.genotypes import Structure as CellStructure
 from search_spaces.NB201.model_search import NASBench201SearchSpace
 from search_spaces.NB201.utils.config import load_config
 from search_spaces.NB201.utils.logging import Logger
