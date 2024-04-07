@@ -170,8 +170,7 @@ setuptools==63.4.1
 shortuuid==1.0.11
 simplejson==3.18.1
 six==1.16.0
-sklearn==0.0.post1
-smac==2.0.0a2
+scikit-learn
 smmap==5.0.0
 sniffio==1.3.0
 sortedcontainers==2.4.0
@@ -194,11 +193,11 @@ tinycss2==1.2.1
 tokenizers==0.13.3
 tomli==2.0.1
 toolz==0.12.0
-torch==1.12.1+cu116
+torch==1.12.1
 torch-cka==0.21
-torchaudio==0.12.1+cu116
+torchaudio==0.12.1
 torchsummary==1.5.1
-torchvision==0.13.1+cu116
+torchvision==0.13.1
 tornado==6.1
 tqdm==4.64.1
 traitlets==5.4.0
