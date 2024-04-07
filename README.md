@@ -59,7 +59,8 @@ The ```toy_benchmarks``` folder contains the pickle files for the toy benchmarks
 The ```search``` folder contains the code used to perform NAS
 
 
-
+### Wandb logging
+We use wandb for logging our experimental results. Please setup an account on wandb following instructions here https://docs.wandb.ai/quickstart
 
 ### Dataset preparation
 
