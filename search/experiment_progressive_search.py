@@ -4,9 +4,6 @@ import random
 import numpy as np
 
 from datasets.data import CIFAR100Data, CIFAR10Data, ExperimentData, ImageNet16120Data
-from search_spaces.NATS.model_search_v1 import NATSSearchSpaceV1  # TODO: Handle v1 and v2
-from search_spaces.NATS.model_search_v2 import NATSSearchSpaceV2
-from search_spaces.NATS.genotypes import Structure as CellStructure
 from search_spaces.NB201.model_search import NASBench201SearchSpace
 from search_spaces.NB201.utils.config import load_config
 from search_spaces.NB201.utils.logging import Logger
@@ -194,38 +191,6 @@ class Experiment:
                 reg_type=reg_type,
                 reg_scale=reg_scale,
                 k=config.k)
-        elif self.search_space == SearchSpace.NATS_V1:  # TODO: Handle v1 and v2
-            genotype = CellStructure.str2structure(
-                '|nor_conv_3x3~0|+|nor_conv_3x3~0|nor_conv_3x3~1|+|skip_connect~0|nor_conv_3x3~1|nor_conv_3x3~2|'
-            )
-            search_model = NATSSearchSpaceV1(
-                optimizer_type=self.one_shot_opt.value,
-                genotype=genotype,
-                num_classes=self.num_classes,
-                criterion=criterion,
-                reg_type=reg_type,
-                reg_scale=reg_scale,
-                affine=config.affine,
-                track_running_stats=config.track_running_stats,
-                path_to_benchmark = self.path_to_benchmark
-                )
-
-        elif self.search_space == SearchSpace.NATS_V2:  # TODO: Handle v1 and v2
-            genotype = CellStructure.str2structure(
-                '|nor_conv_3x3~0|+|nor_conv_3x3~0|nor_conv_3x3~1|+|skip_connect~0|nor_conv_3x3~1|nor_conv_3x3~2|'
-            )
-            search_model = NATSSearchSpaceV2(
-                optimizer_type=self.one_shot_opt.value,
-                genotype=genotype,
-                num_classes=self.num_classes,
-                criterion=criterion,
-                reg_type=reg_type,
-                reg_scale=reg_scale,
-                affine=config.affine,
-                track_running_stats=config.track_running_stats,
-                path_to_benchmark = self.path_to_benchmark
-                )
-
         return search_model
 
     def get_config(self):

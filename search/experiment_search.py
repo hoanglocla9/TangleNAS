@@ -81,7 +81,8 @@ class Experiment:
                  entangle_weights: bool = True,
                  use_we_v2: bool = False,
                  submission: bool = False,
-                 save_every_epoch: bool = False):
+                 save_every_epoch: bool = False,
+                 wandb_entity: str = 'your-team'):
         self.search_space = search_space
         self.one_shot_opt = one_shot_opt
         self.dataset = dataset
@@ -94,6 +95,7 @@ class Experiment:
         self.entangle_weights = entangle_weights
         self.use_we_v2 = use_we_v2
         self.save_every_epoch = save_every_epoch
+        self.wandb_entity = wandb_entity
 
         if name is not None:
             self.name = f'{name}_{self.seed}'
@@ -222,38 +224,6 @@ class Experiment:
                 reg_scale=reg_scale,
                 entangle_weights=self.entangle_weights,
                 use_we_v2=self.use_we_v2)
-        elif self.search_space == SearchSpace.NATS_V1:  # TODO: Handle v1 and v2
-            genotype = CellStructure.str2structure(
-                '|nor_conv_3x3~0|+|nor_conv_3x3~0|nor_conv_3x3~1|+|skip_connect~0|nor_conv_3x3~1|nor_conv_3x3~2|'
-            )
-            search_model = NATSSearchSpaceV1(
-                optimizer_type=self.one_shot_opt.value,
-                genotype=genotype,
-                num_classes=self.num_classes,
-                criterion=criterion,
-                reg_type=reg_type,
-                reg_scale=reg_scale,
-                affine=config.affine,
-                track_running_stats=config.track_running_stats,
-                path_to_benchmark=self.path_to_benchmark
-            )
-
-        elif self.search_space == SearchSpace.NATS_V2:  # TODO: Handle v1 and v2
-            genotype = CellStructure.str2structure(
-                '|nor_conv_3x3~0|+|nor_conv_3x3~0|nor_conv_3x3~1|+|skip_connect~0|nor_conv_3x3~1|nor_conv_3x3~2|'
-            )
-            search_model = NATSSearchSpaceV2(
-                optimizer_type=self.one_shot_opt.value,
-                genotype=genotype,
-                num_classes=self.num_classes,
-                criterion=criterion,
-                reg_type=reg_type,
-                reg_scale=reg_scale,
-                affine=config.affine,
-                track_running_stats=config.track_running_stats,
-                path_to_benchmark=self.path_to_benchmark,
-                use_we_v2=self.use_we_v2
-            )
         elif self.search_space == SearchSpace.TOY_CELL:
             search_model = ToyCellSearchSpace(
                 optimizer_type=self.one_shot_opt.value,
@@ -301,7 +271,7 @@ class Experiment:
         project_name = "tanglenas-submission" if self.submission is True else "tanglenas-prototype"
 
         wandb.init(project=project_name,
-                   entity="your-team", name=self.name)
+                   entity=self.wandb_entity, name=self.name)
         self.logger = Logger(log_dir=self.log_dir,
                              seed=self.seed,
                              exp_name=f'{self.name}-{wandb.run.id}')
@@ -385,6 +355,7 @@ if __name__ == '__main__':
                         action='store_true', help='watch the model on wandb')
     parser.add_argument('--save_every_epoch', default=False,
                         action='store_true', help='checkpoint every epoch')
+    parser.add_argument('--wandb_entity', default='your-team', type=str)
 
     args = parser.parse_args()
 
@@ -403,5 +374,6 @@ if __name__ == '__main__':
                             entangle_weights=not args.no_weight_entanglement,
                             use_we_v2=args.use_we_v2,
                             submission=args.submission,
-                            save_every_epoch=args.save_every_epoch)
+                            save_every_epoch=args.save_every_epoch,
+                            wandb_entity=args.wandb_entity)
     searcher = experiment.run(args.watch_model)
