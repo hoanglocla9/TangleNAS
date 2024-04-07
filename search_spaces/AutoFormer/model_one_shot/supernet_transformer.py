@@ -3,12 +3,12 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from model.module.Linear_super import LinearSuper
-from model.module.layernorm_super import LayerNormSuper
-from model.module.multihead_super import AttentionSuper
-from model.module.embedding_super import PatchembedSuper
-from model.utils import trunc_normal_
-from model.utils import DropPath
+from model_one_shot.module.linear_super import LinearSuper
+from model_one_shot.module.layernorm_super import LayerNormSuper
+from model_one_shot.module.multihead_super import AttentionSuper
+from model_one_shot.module.embedding_super import PatchembedSuper
+from model_one_shot.utils import trunc_normal_
+from model_one_shot.utils import DropPath
 import numpy as np
 from typing import Union, Tuple, Any, Callable, Iterator, Set, Optional, overload, TypeVar, Mapping, Dict, List
 

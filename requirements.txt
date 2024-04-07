@@ -219,3 +219,4 @@ yapf==0.32.0
 yarl==1.9.2
 zict==2.2.0
 zipp==3.10.0
+sparsemax
