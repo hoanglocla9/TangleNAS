@@ -77,6 +77,11 @@ Download the ```imagenet-1k``` from [here](https://www.image-net.org/download.ph
 ```bash
 bash job_scripts/launch_toy_cell_fmnist_we.sh
 ```
+or use the python command 
+
+```python 
+python -m search.experiment_search --dataset fashion_mnist --optimizer drnas --searchspace toy_cell --seed 9001 --use_we_v2 --path_to_benchmark toy_benchmarks/entangled_cell_ss_benchmark.pkl
+```
 We directly query the tabular benchmark in this case to obtain the test performance after search 
 #### Conv Macro Space
 
@@ -84,6 +89,10 @@ We directly query the tabular benchmark in this case to obtain the test performa
 bash job_scripts/launch_conv_macro.sh
 ```
 We directly query the tabular benchmark in this case to obtain the test performance after search 
+```python 
+python -m search.experiment_search --dataset cifar10 --optimizer drnas --searchspace "toy_conv_macro" --seed 9001 --use_we_v2 --path_to_benchmark toy_benchmarks/conv_macro_bench.pkl --train_portion 0.8
+```
+
 ### Search on the NB201 search space
 ```bash
 bash job_scripts/launch_nb201.sh
@@ -94,30 +103,61 @@ bash job_scripts/launch_nb201_imgnet.sh
 ```
 We directly query the tabular benchmark in this case to obtain the test performance after search 
 
+Alternatively use
+
+```python
+python -m search.experiment_search --dataset cifar10 --optimizer drnas --searchspace nb201 --seed 9001 --use_we_v2  --path_to_benchmark /path/to/NAS-Bench-201-v1_0-e61699.pth --train_portion 0.5
+```
+```python
+python -m search.experiment_search --dataset imgnet16_120 --optimizer drnas --searchspace nb201 --seed 9001 --use_we_v2  --path_to_benchmark /path/to/NAS-Bench-201-v1_0-e61699.pth --train_portion 0.5 --data_path /path/to/ImageNet16
+```
+
 ### Search on the DARTS search space
 
 ```bash
 bash job_scripts/launch_darts_cifar10.sh
 ```
+Alternatively use
 
+```python
+python -m search.experiment_search --dataset cifar10 --train_portion 0.8 --optimizer drnas --searchspace darts  --use_we_v2 --seed 9001 --train_portion 0.5"
+```
 To evaluate our derived architectures from the darts search space we simply plug in the architectures derived into the training protocol in the [darts](https://github.com/quark0/darts/) repo. The derived architectures can be found in ```train/genotypes.py```
 
 ### Search on the AutoFormer search space
 ```bash
 bash job_scripts/job_autoformer_cifar10.sh
 ```
+
+Alternatively use
+```python
+python -m torch.distributed.launch --nproc_per_node=2 --use_env search_spaces/AutoFormer/supernet_train_cifar10.py --data-path . --gp --change_qkv --relative_position --mode super --dist-eval --cfg search_spaces/AutoFormer/experiments/supernet/supernet-T.yaml --epochs 500 --warmup-epochs 20 --output "output_autoformer_drnas_cifar10" --batch-size 512 --one_shot_opt drnas --use_we_v2 --data-set CIFAR10 --ratio 0.8
+```
 ```bash
 bash job_scripts/job_autoformer_cifar100.sh
+```
+Alternatively use
+```python
+python -m torch.distributed.launch --nproc_per_node=2 --use_env search_spaces/AutoFormer/supernet_train_cifar10.py --data-path . --gp --change_qkv --relative_position --mode super --dist-eval --cfg search_spaces/AutoFormer/experiments/supernet/supernet-T.yaml --epochs 500 --warmup-epochs 20 --output "output_autoformer_drnas_cifar100" --batch-size 512 --one_shot_opt drnas --use_we_v2 --data-set CIFAR100 --ratio 0.8
 ```
 ```bash
 bash job_scripts/job_autoformer_imgnet.sh
 
+```
+Alternatively use
+```python
+python -m torch.distributed.launch --nproc_per_node=2 --use_env search_spaces/AutoFormer/supernet_train.py --data-path /path/to/imagenet --gp --change_qkv --relative_position --mode super --dist-eval --cfg search_spaces/AutoFormer/experiments/supernet/supernet-T.yaml --epochs 500 --warmup-epochs 20 --output "output_autoformer_drnas_imgnet" --batch-size 512 --one_shot_opt drnas --use_we_v2 --amp --data-set IMNET
 ```
 
 We use the same evaluation pipeline as AutoFormer to evaluate the searched model in AutoFormer-T space
 ### Search on the MobileNetv3 search space
 ```bash
 bash job_scripts/job_imgnet_mobilenetv3.sh
+```
+
+Alternatively use
+```python
+python -m torch.distributed.launch --nproc_per_node=8 --use_env search_spaces/MobileNetV3/finetune/mobilenet_finetune.py --one_shot_opt drnas --opt_strategy "alternating"  --valid_size 10000
 ```
 We use the same evaluation pipeline as Once-For-All (OFA) to evaluate the searched model in MobileNetV3 space
 ### One-Shot NanoGPT Search with TinyStories

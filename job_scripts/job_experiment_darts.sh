@@ -35,6 +35,6 @@ else
     we_v2_flag=""
 fi
 
-python_cmd="python -m search.experiment_search --dataset ${dataset} --train_portion 0.8 --optimizer ${optimizer} --searchspace ${search_space} --seed ${seed} ${submission_flag} ${we_flag} ${we_v2_flag} --train_portion ${train_portion}"
+python_cmd="python -m search.experiment_search --dataset ${dataset} --optimizer ${optimizer} --searchspace ${search_space} --seed ${seed} ${submission_flag} ${we_flag} ${we_v2_flag} --train_portion ${train_portion}"
 
 eval $python_cmd

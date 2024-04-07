@@ -1,5 +1,5 @@
 #!/bin/bash
-optimizers=("spos")
+optimizers=("spos" "drnas")
 datasets=("imgnet16_120")
 entanglements=("we")
 train_portion=(0.8 0.5)
