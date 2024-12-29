@@ -1,0 +1,18 @@
+./configs/search/toy_cell-drnas.config
+Configure(lr=0.025, epochs=100, optim='SGD', weight_decay=0.0005, momentum=0.9, nesterov=True, criterion='Softmax', batch_size=64, channel=32, max_nodes=2, affine=False, track_running_stats=True, arch_learning_rate=0.0003, arch_weight_decay=0.001, learning_rate_min=0.001, reg_type='l2', reg_scale=0.001, cutout=0, train_portion=0.5, use_data_parallel=False)
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/picarib/Projects/TangleNAS/search/experiment_search.py", line 379, in <module>
+    searcher = experiment.run(args.watch_model)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/picarib/Projects/TangleNAS/search/experiment_search.py", line 287, in run
+    model = self.get_search_model(config=config, criterion=criterion)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/picarib/Projects/TangleNAS/search/experiment_search.py", line 228, in get_search_model
+    search_model = ToyCellSearchSpace(
+                   ^^^^^^^^^^^^^^^^^^^
+  File "/home/picarib/Projects/TangleNAS/toy_search_spaces/cell_topology/model_search.py", line 192, in __init__
+    with open(self.api, "rb") as f:
+         ^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'toy_benchmarks/entangled_cell_ss_benchmark.pk'

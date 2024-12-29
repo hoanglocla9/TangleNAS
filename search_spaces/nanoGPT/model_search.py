@@ -12,17 +12,17 @@ import inspect
 from dataclasses import dataclass
 
 import torch
-from optimizers.mixop.entangle import EntangledOp
 import torch.nn as nn
 from torch.nn import functional as F
-from toy_search_spaces.nanoGPT.mixed_operations.mixed_embedding_attn import MixedEmbeddingAttention
-from toy_search_spaces.nanoGPT.mixed_operations.mixed_attn_head_embed import MixedAttnHeadEmbed,  MixedAttnEmbd, MixedAttnHead
-from toy_search_spaces.nanoGPT.mixed_operations.mixed_embedding import MixedEmbeddingV2
-from toy_search_spaces.nanoGPT.mixed_operations.mixed_linear_head import MixedLinearHeadV2
-from toy_search_spaces.nanoGPT.mixed_operations.mixed_linear_emb import MixedLinearV2Emb, MixedLinear
-from toy_search_spaces.nanoGPT.mixed_operations.mixed_linear_emb_mlp import MixedLinearV2
-from toy_search_spaces.nanoGPT.mixed_operations.mixed_layer_norm import MixedLayerNormV2
+from mixed_operations.mixed_embedding_attn import MixedEmbeddingAttention
+from mixed_operations.mixed_attn_head_embed import MixedAttnHeadEmbed,  MixedAttnEmbd, MixedAttnHead
+from mixed_operations.mixed_embedding import MixedEmbeddingV2
+from mixed_operations.mixed_linear_head import MixedLinearHeadV2
+from mixed_operations.mixed_linear_emb import MixedLinearV2Emb, MixedLinear
+from mixed_operations.mixed_linear_emb_mlp import MixedLinearV2
+from mixed_operations.mixed_layer_norm import MixedLayerNormV2
 from optimizers.optim_factory import get_mixop, get_sampler
+from optimizers.mixop.entangle import EntangledOp
 import itertools
 # @torch.jit.script # good to enable when not using torch.compile, disable when using (our default)
 def new_gelu(x):

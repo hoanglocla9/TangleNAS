@@ -26,8 +26,8 @@ import numpy as np
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
-from toy_search_spaces.nanoGPT.architect import ArchitectV1
-from toy_search_spaces.nanoGPT.model_search import GPTConfig, GPT
+from architect import ArchitectV1
+from model_search import GPTConfig, GPT
 import argparse
 import time
 
@@ -37,7 +37,7 @@ parser.add_argument("--seed", type=int, default=42, help="random seed")
 parser.add_argument("--train_portion", type=float, default=0.5, help="train fraction")
 
 parser.add_argument(
-    "--data_dir", type=str, default="toy_search_spaces/nanoGPT/data/tinystories"
+    "--data_dir", type=str, default="search_spaces/nanoGPT/data/tinystories"
 )
 args, _ = parser.parse_known_args()
 print(args)
@@ -64,7 +64,7 @@ wandb_project = "tinystories_with_we"
 
 # Data
 gradient_accumulation_steps = 5 * 6  # used to simulate larger batch sizes
-batch_size = 12  # if gradient_accumulation_steps > 1, this is the micro-batch size
+batch_size = 2  # if gradient_accumulation_steps > 1, this is the micro-batch size
 block_size = 1024
 
 # Model
@@ -105,7 +105,7 @@ config_keys = [
     if not k.startswith("_") and isinstance(v, (int, float, bool, str))
 ]
 exec(
-    open("toy_search_spaces/nanoGPT/configurator.py").read()
+    open("search_spaces/nanoGPT/configurator.py").read()
 )  # overrides from command line or config file
 config = {k: globals()[k] for k in config_keys}  # will be useful for logging
 # -----------------------------------------------------------------------------
@@ -137,7 +137,7 @@ out_dir = f"output_tinystories/out_search_{optimizer}_{train_portion}_{seed}_{ma
 
 if master_process:
     os.makedirs(out_dir, exist_ok=True)
-
+ 
 print(f"Checkpoint files will be saved to {out_dir}")
 
 # set seeds

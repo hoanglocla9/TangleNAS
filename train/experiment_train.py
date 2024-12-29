@@ -24,6 +24,7 @@ class SearchSpace(Enum):
     NB201 = 'nb201'
     NATS_V1 = 'nats_v1'
     NATS_V2 = 'nats_v2'
+    MAMBA_ATTENTION = 'mamba_attention'
 
 
 class DatasetType(Enum):
@@ -32,6 +33,8 @@ class DatasetType(Enum):
     IMGNET = 'imgnet'
     IMGNET16_1K = 'imgnet16_1k'
     IMGNET16_120 = 'imgnet16_120'
+    ALPACA = 'alpaca'
+
 
 
 N_CLASSES = {

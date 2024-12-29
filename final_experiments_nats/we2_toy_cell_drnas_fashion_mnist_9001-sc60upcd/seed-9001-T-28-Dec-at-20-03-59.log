@@ -1,0 +1,2 @@
+./configs/search/toy_cell-drnas.config
+Configure(lr=0.025, epochs=100, optim='SGD', weight_decay=0.0005, momentum=0.9, nesterov=True, criterion='Softmax', batch_size=64, channel=32, max_nodes=2, affine=False, track_running_stats=True, arch_learning_rate=0.0003, arch_weight_decay=0.001, learning_rate_min=0.001, reg_type='l2', reg_scale=0.001, cutout=0, train_portion=0.5, use_data_parallel=False)

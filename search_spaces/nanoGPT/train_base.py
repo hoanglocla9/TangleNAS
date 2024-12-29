@@ -47,7 +47,7 @@ parser.add_argument(
     help="Path to load the architecture config from. Use this argument to train a custom model. Either this argument or arch_traj_load_path argument must be specified, but not both.",
 )
 parser.add_argument(
-    "--data_dir", type=str, default="toy_search_spaces/nanoGPT/data/"
+    "--data_dir", type=str, default="search_spaces/nanoGPT/data/tinystories", help="Path to the data directory."
 )
 parser.add_argument(
     "--early_stopping", action="store_true", help="Enable early stopping."
@@ -98,7 +98,6 @@ else:
     config = load_config(args.arch_config_file, None, None)._asdict()
 
 print(config)
-
 config_string = ""
 for k, v in config.items():
     k_ = "".join(map(lambda s: s[0], k.split("_")))
@@ -165,7 +164,7 @@ config_keys = [
     if not k.startswith("_") and isinstance(v, (int, float, bool, str))
 ]
 exec(
-    open("toy_search_spaces/nanoGPT/configurator.py").read()
+    open("search_spaces/nanoGPT/configurator.py").read()
 )  # overrides from command line or config file
 config = {k: globals()[k] for k in config_keys}  # will be useful for logging
 # -----------------------------------------------------------------------------
@@ -400,7 +399,7 @@ if wandb_log and master_process:
     import wandb
 
     wandb_run_name = f"TinyStories_trainmodel_{search_optimizer}_{search_train_portion}_{config_string}_{args.max_iters}_{args.seed}"
-    wandb.init(project=wandb_project, name=wandb_run_name, entity='your-team', config=config)
+    wandb.init(project=wandb_project, name=wandb_run_name, entity='', config=config)
 
 # training loop
 X, Y = get_batch("train")  # fetch the very first batch
