@@ -1,4 +1,4 @@
-from transformers.models.mamba2.modeling_mamba2 import Mamba2PreTrainedModel, Mamba2RMSNorm, Mamba2Block, Mamba2Output, Mamba2Config
+from transformers.models.mamba2.modeling_mamba2 import Mamba2PreTrainedModel, Mamba2Output
 from transformers.activations import  ACT2FN
 
 from transformers.configuration_utils import PretrainedConfig
@@ -14,6 +14,7 @@ from mamba_ssm.modules.mha import _update_kv_cache
 
 from einops import rearrange
 
+import inspect
 import torch.nn.functional as F
 try:
     from flash_attn.layers.rotary import RotaryEmbedding
@@ -31,32 +32,59 @@ except ImportError:
     causal_conv1d_fn, causal_conv1d_update = None, None
 
 
+from optimizers.mixop.entangle import EntangledOp
 from dataclasses import dataclass
+from mixed_operations.mixed_conv1d import MixedConv1dV2
+from mixed_operations.mixed_rms_norm import MixedRMSNormGatedV2
+from mixed_operations.mixed_linear_mamba2 import MixedLinearV2_InProj, MixedLinearV2_OutProj, MixedLinearV2_InProj_MHA, MixedLinearV2_OutProj_MHA
+from mixed_operations.mixed_embedding import MixedEmbeddingV2
+import itertools
+from mamba_ssm.ops.triton.selective_state_update import selective_state_update
+from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined, mamba_split_conv1d_scan_combined
 
-class HybridMamba2Config(PretrainedConfig):
+from mixed_operations.mixed_linear_head import MixedLinearHeadV2
+from optimizers.optim_factory import get_mixop, get_sampler
+
+def get_entangle_ops(op, choices, op_name):
+        return [EntangledOp(None, op_name) for _ in range(len(choices)-1)] + [EntangledOp(op, op_name)]
+
+def get_entangle_ops_combi(op, choices1, choices2, op_name):
+    choices = list(itertools.product(choices1, choices2))
+    return [EntangledOp(None, op_name) for _ in range(len(choices)-1)] + [EntangledOp(op, op_name)]
+
+def apply_mask_to_padding_states(hidden_states, attention_mask):
+    """
+    Tunes out the hidden states for padding tokens, see https://github.com/state-spaces/mamba/issues/66
+    """
+    if attention_mask is not None and attention_mask.shape[1] > 1 and attention_mask.shape[0] > 1:
+        dtype = hidden_states.dtype
+        hidden_states = (hidden_states * attention_mask[:, :, None]).to(dtype)
+
+    return hidden_states
+
+class EntangleHybridMamba2Config(PretrainedConfig):
     model_type = "mamba2"
 
     def __init__(
         self,
-        num_heads=128,
-        head_dim=64,
-        vocab_size=32768,
-        hidden_size=4096,
-        state_size=128,
-        num_hidden_layers=64,
+        num_heads_list:list = [16, 24, 32],
+        vocab_size:int = 50304,
+        hidden_size_list:list = [384, 768, 1024],
+        state_size:int = 128,
+        num_hidden_layers_list:list = [8,9,10],
         layer_norm_epsilon=1e-5,
         pad_token_id=1,
         bos_token_id=0,
         eos_token_id=2,
         expand=2,
         conv_kernel=4,
-        n_groups=8,
+        n_groups=1,
         use_bias=False,
         use_conv_bias=True,
         hidden_act="silu",
         initializer_range=0.1,
         residual_in_fp32=True,
-        time_step_rank="auto",
+        # time_step_rank="auto",
         time_step_min=0.001,
         time_step_max=0.1,
         time_step_floor=1e-4,
@@ -65,19 +93,23 @@ class HybridMamba2Config(PretrainedConfig):
         use_cache=True,
         rms_norm=True,
         chunk_size=256,
-        tie_word_embeddings=False,
+        tie_word_embeddings=True,
         attn_layer_idxs=[],
-        attn_params={},
+        attn_num_heads_list:list = [16, 24, 32],
+        attn_embed_dim_list:list = [384, 768, 1024],
+        max_seqlen=2048,
+        mixop=None,
+        device='cuda',
         **kwargs,
     ):
         self.vocab_size = vocab_size
-        self.hidden_size = hidden_size
+        self.hidden_size_list = hidden_size_list
         self.state_size = state_size
-        self.num_hidden_layers = num_hidden_layers
+        self.num_hidden_layers_list = num_hidden_layers_list
         self.layer_norm_epsilon = layer_norm_epsilon
         self.conv_kernel = conv_kernel
         self.expand = expand
-
+        self.device=device
         self.bos_token_id = bos_token_id
         self.eos_token_id = eos_token_id
         self.pad_token_id = pad_token_id
@@ -85,7 +117,8 @@ class HybridMamba2Config(PretrainedConfig):
         self.use_conv_bias = use_conv_bias
         self.hidden_act = hidden_act
         self.initializer_range = initializer_range
-        self.time_step_rank = math.ceil(self.hidden_size / 16) if time_step_rank == "auto" else time_step_rank
+        self.mixop=mixop
+        # self.time_step_rank = math.ceil(max(self.hidden_size_list) / 16) if time_step_rank == "auto" else time_step_rank
         self.time_step_min = time_step_min
         self.time_step_max = time_step_max
         self.time_step_floor = time_step_floor
@@ -93,16 +126,17 @@ class HybridMamba2Config(PretrainedConfig):
         self.residual_in_fp32 = residual_in_fp32
         self.use_cache = use_cache
         self.n_groups = n_groups
-        self.num_heads = num_heads
-        self.head_dim = head_dim
+        self.num_heads_list = num_heads_list
         self.rms_norm = rms_norm
         self.state_size = state_size
         self.chunk_size = chunk_size
         self.time_step_limit = time_step_limit
         self.tie_word_embeddings = tie_word_embeddings
         self.attn_layer_idxs = attn_layer_idxs
-        self.attn_params = attn_params
-
+        self.attn_embed_dim_list = attn_embed_dim_list
+        self.attn_num_heads_list = attn_num_heads_list
+        self.max_seqlen = max_seqlen
+        
         super().__init__(
             bos_token_id=bos_token_id,
             eos_token_id=eos_token_id,
@@ -127,7 +161,7 @@ class HybridMamba2Cache:
     """
 
     def __init__(
-        self, config: Mamba2Config, batch_size: int, dtype: torch.dtype = torch.float16, device: Optional[str] = None
+        self, config: EntangleHybridMamba2Config, batch_size: int, dtype: torch.dtype = torch.float16, device: Optional[str] = None
     ):
         self.seqlen_offset = 0
         self.max_seqlen = config.max_seqlen
@@ -136,7 +170,8 @@ class HybridMamba2Cache:
         self.lengths_per_sample = None
         self.dtype = dtype
         self.conv_kernel_size = config.conv_kernel
-        self.intermediate_size = int(config.expand * config.hidden_size)
+        self.intermediate_size = int(config.expand * max(config.hidden_size_list))
+        self.key_value_memory_dict = {}
 
         self.conv_states = {
             i: torch.zeros(
@@ -146,36 +181,39 @@ class HybridMamba2Cache:
                 device=device,
                 dtype=dtype,
             )
-            for i in range(config.num_hidden_layers) 
+            for i in range(max(config.num_hidden_layers_list)) 
         }
         self.ssm_states = {
             i: torch.zeros(
-                batch_size, config.num_heads, config.head_dim, config.state_size, device=device, dtype=dtype
+                batch_size, max(config.num_heads_list), int(max(config.hidden_size_list) * config.expand)//min(config.num_heads_list), config.state_size, device=device, dtype=dtype
             )
-            for i in range(config.num_hidden_layers) if i not in config.attn_layer_idxs
+            for i in range(max(config.num_hidden_layers_list)) if i not in config.attn_layer_idxs  #
         }
+        ### TODO: fix for hybrid models with attention layers.
         self.kv_states = {
             i: torch.zeros(
-                batch_size, config.max_seqlen, 2, config.num_heads, config.head_dim, device=device, dtype=dtype
+                batch_size, config.max_seqlen, 2, max(config.num_heads_list), int(max(config.hidden_size_list))//min(config.num_heads_list), device=device, dtype=dtype
             )
             for i in config.attn_layer_idxs
-        }
+        } #  * config.expand
 
         self.activation = config.hidden_act
         self.act = ACT2FN[config.hidden_act]
 
     def update_conv_state(
-        self, layer_idx: int, new_conv_state: torch.Tensor, cache_position: torch.LongTensor
+        self, layer_idx: int, new_conv_state: torch.Tensor, cache_init:bool
     ) -> torch.Tensor:
-        conv_state = self.conv_states[layer_idx]
-        cache_position = cache_position.clamp(0, self.conv_kernel_size - 1)
-
-        conv_state = conv_state.roll(shifts=-1, dims=-1)
-        conv_state[:, :, cache_position] = new_conv_state.to(conv_state.device)
-        self.conv_states[layer_idx].zero_()
-        self.conv_states[layer_idx] += conv_state
+        if cache_init:
+            self.conv_states[layer_idx] = new_conv_state.to(self.conv_states[layer_idx].device)
+        else:
+            self.conv_states[layer_idx] = self.conv_states[layer_idx].roll(shifts=-1, dims=-1)
+            self.conv_states[layer_idx][:, :, -1] = new_conv_state[:, 0, :].to(self.conv_states[layer_idx].device)
         return self.conv_states[layer_idx]
 
+    def update_ssm_state(self, layer_idx: int, new_ssm_state: torch.Tensor):
+        self.ssm_states[layer_idx] = new_ssm_state.to(self.ssm_states[layer_idx].device)
+        return self.ssm_states[layer_idx]
+    
     def update_kv_cache(self,layer_idx: int, kv: torch.Tensor):
         """kv: (batch_size, seqlen, 2, nheads, head_dim) or (batch_size, 1, 2, nheads, head_dim)"""
         # Pre-allocate memory for key-values for inference.
@@ -205,14 +243,17 @@ class HybridMamba2Cache:
 
         self.conv_states.zero_()
         self.ssm_states.zero_()
+        self.kv_states.zero_()
 
 class MHA(nn.Module):
     """Multi-head self-attention and cross-attention"""
 
     def __init__(
         self,
-        embed_dim,
-        num_heads,
+        # embed_dim,
+        # num_heads,
+        config: EntangleHybridMamba2Config=None, 
+        mixop: EntangledOp=None,    
         num_heads_kv=None,
         head_dim=None,  # If None, use embed_dim // num_heads
         mlp_dim=0,
@@ -220,13 +261,13 @@ class MHA(nn.Module):
         out_proj_bias=True,
         softmax_scale=None,
         causal=False,
-        layer_idx=None,
+        layer_idx:int=None,
         d_conv=0,
         rotary_emb_dim=0,
         rotary_emb_base=10000.0,
         rotary_emb_interleaved=False,
-        device=None,
-        dtype=torch.float16,
+        # device='cuda',
+        # dtype=torch.float16,
     ) -> None:
         """
         num_heads_kv: can be used to toggle MQA / GQA. If None, use num_heads.
@@ -234,26 +275,30 @@ class MHA(nn.Module):
             performance reason: for post-norm architecture, returning the input allows us
             to fuse the backward of nn.Linear with the residual connection.
         """
-        factory_kwargs = {"device": device, "dtype": dtype}
+        # factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
-        self.embed_dim = embed_dim
+        # self.embed_dim = embed_dim
+        self.mixop = mixop
+        self.embed_dim_list = config.attn_embed_dim_list
         self.layer_idx = layer_idx
         self.d_conv = d_conv
         self.rotary_emb_dim = rotary_emb_dim
         self.softmax_scale = softmax_scale
         self.causal = causal
 
-        self.num_heads = num_heads
-        self.num_heads_kv = num_heads_kv if num_heads_kv is not None else num_heads
-        assert (
-            self.num_heads % self.num_heads_kv == 0
-        ), "num_heads must be divisible by num_heads_kv"
-        if head_dim is None:
-            assert self.embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
-        self.head_dim = head_dim if head_dim is not None else self.embed_dim // num_heads
+        # self.num_heads = num_heads
+        self.num_heads_list = config.attn_num_heads_list
+        self.num_heads_kv_list = self.num_heads_list
+        # self.num_heads_kv =  num_heads_kv if num_heads_kv is not None else num_heads
+        
+        # num_heads == num_heads_kv for now
+        # if head_dim is None:
+        #     assert self.embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
+        self.max_head_dim =  max(self.embed_dim_list)//min(self.num_heads_list)   # head_dim if head_dim is not None else self.embed_dim // num_heads
+
         self.mlp_dim = math.ceil(mlp_dim / 256) * 256
-        qkv_dim = self.head_dim * (self.num_heads + 2 * self.num_heads_kv)
-        out_dim = self.head_dim * self.num_heads
+        max_qkv_dim = self.max_head_dim * 3 * (max(self.num_heads_list)) #  + 2 * self.num_heads_kv
+        max_out_dim = self.max_head_dim * max(self.num_heads_list)
 
         if self.rotary_emb_dim > 0:
             assert RotaryEmbedding is not None, "rotary requires flash_attn to be installed"
@@ -264,13 +309,23 @@ class MHA(nn.Module):
                 device=device,
             )
 
-        self.in_proj = nn.Linear(embed_dim, qkv_dim + self.mlp_dim, bias=qkv_proj_bias, **factory_kwargs)
+        in_proj = nn.Linear(max(self.embed_dim_list), max_qkv_dim + self.mlp_dim, bias=qkv_proj_bias ) # factory_kwargs
+        self.in_proj_mix_op = MixedLinearV2_InProj_MHA(self.embed_dim_list, self.num_heads_list, mlp_dim=mlp_dim, linear_layer=in_proj)
+        self.in_proj_mix_op_list = get_entangle_ops_combi(self.in_proj_mix_op, self.embed_dim_list, self.num_heads_list, "in_proj_mha")
+
         if self.d_conv > 0:
-            self.conv1d = nn.Conv1d(
-                qkv_dim, qkv_dim, kernel_size=self.d_conv, padding=self.d_conv - 1, groups=qkv_dim,
-                **factory_kwargs
-            )
-        self.out_proj = nn.Linear(out_dim + self.mlp_dim // 2, embed_dim, bias=out_proj_bias, **factory_kwargs)
+            raise 'Not support d_conv>0 yet!'
+            # conv1d = nn.Conv1d(
+            #     max_qkv_dim, max_qkv_dim, kernel_size=self.d_conv, padding=self.d_conv - 1, groups=max_qkv_dim,
+            #     **factory_kwargs
+            # )
+            # self.conv1d_mix_op = MixedConv1dV2(conv1d_dim_list, conv1d)
+            # self.conv1d_mix_op_list = get_entangle_ops(self.conv1d_mix_op, conv1d_dim_list, "conv1d_mamba2")
+        
+        
+        self.out_proj = nn.Linear(max_out_dim + self.mlp_dim // 2, max(self.embed_dim_list), bias=out_proj_bias)  # , **factory_kwargs
+        self.out_proj_mix_op = MixedLinearV2_OutProj_MHA(self.embed_dim_list, self.num_heads_list, mlp_dim=mlp_dim, linear_layer=in_proj)
+        self.out_proj_mix_op_list = get_entangle_ops_combi(self.out_proj_mix_op, self.embed_dim_list, self.num_heads_list, "out_proj_mha")
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None):
         dtype = self.out_proj.weight.dtype if dtype is None else dtype
@@ -282,7 +337,7 @@ class MHA(nn.Module):
         else:
             conv_state = None
         kv_cache = torch.empty(
-            batch_size, max_seqlen, 2, self.num_heads_kv, self.head_dim, dtype=dtype, device=device,
+            batch_size, max_seqlen, 2, max(self.num_heads_list), self.max_head_dim, dtype=dtype, device=device,
         )
         return kv_cache, conv_state
 
@@ -325,7 +380,7 @@ class MHA(nn.Module):
             cache_seqlens=cache_seqlens,
             softmax_scale=self.softmax_scale,
             causal=self.causal,
-            rotary_interleaved=self.rotary_emb.interleaved if self.rotary_emb_dim > 0 else False,
+            rotary_interleaved= self.rotary_emb.interleaved if self.rotary_emb_dim > 0 else False,
         )
         return context
 
@@ -346,8 +401,8 @@ class MHA(nn.Module):
             # TODO: this only uses seqlen_offset and not lengths_per_sample.
             kv = self._update_kv_cache(kv, cache_params)
             k, v = kv.unbind(dim=-3)
-            k = torch.repeat_interleave(k, dim=2, repeats=self.num_heads // self.num_heads_kv)
-            v = torch.repeat_interleave(v, dim=2, repeats=self.num_heads // self.num_heads_kv)
+            k = torch.repeat_interleave(k, dim=2, repeats=1) # self.num_heads == self.num_heads_kv)
+            v = torch.repeat_interleave(v, dim=2, repeats=1) # self.num_heads // self.num_heads_kv
             return F.scaled_dot_product_attention(
                 q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), is_causal=self.causal, scale=self.softmax_scale
             ).transpose(1, 2)
@@ -372,7 +427,11 @@ class MHA(nn.Module):
                 causal=self.causal,
             )
 
-    def forward(self, x, cache_params:HybridMamba2Cache=None, cache_position: Optional[torch.LongTensor] = None, attention_mask: Optional[torch.Tensor] = None):
+    def forward(self, x, 
+                cache_params:HybridMamba2Cache=None, cache_position: Optional[torch.LongTensor] = None, 
+                attention_mask: Optional[torch.Tensor] = None,
+                arch_params: dict = None, 
+                use_argmax: Optional[bool] = False):
         """
         Arguments:
             x: (batch, seqlen, hidden_dim) (where hidden_dim = num heads * head dim) if
@@ -381,6 +440,7 @@ class MHA(nn.Module):
             cache_params: for generation. Adapted from Megatron-LM (and Apex)
             https://github.com/NVIDIA/apex/blob/3ff1a10f72ec07067c4e44759442329804ac5162/apex/transformer/testing/standalone_transformer_lm.py#L470
         """
+        residual = x
         if cache_params is not None and self.layer_idx not in cache_params.key_value_memory_dict:
             cache_params.key_value_memory_dict[self.layer_idx] = self.allocate_inference_cache(
                 x.shape[0], cache_params.max_seqlen, dtype=x.dtype
@@ -396,52 +456,55 @@ class MHA(nn.Module):
             )
         )
         rotary_max_seqlen = cache_params.max_seqlen if cache_params is not None else None
-        qkv = self.in_proj(x)
+        # qkv = self.in_proj(x)
+        qkv = self.mixop.forward(x,  [arch_params["hidden_size"], arch_params["num_heads"][self.layer_idx]], self.in_proj_mix_op_list, combi=True)
         if self.mlp_dim > 0:
             qkv, x_mlp = qkv.split([qkv.shape[-1] - self.mlp_dim, self.mlp_dim], dim=-1)
             x_mlp_up, x_mlp_gate = x_mlp.chunk(2, dim=-1)
             x_mlp = x_mlp_up * F.silu(x_mlp_gate)
-        if self.d_conv > 0:
-            # The inference code for conv1d is pretty messy, should clean it up
-            if (cache_params is None or cache_params.seqlen_offset == 0):
-                if causal_conv1d_fn is None:
-                    qkv = rearrange(
-                        self.conv1d(rearrange(qkv, "b s d -> b d s"))[..., :-(self.d_conv - 1)], "b d s -> b s d"
-                    ).contiguous()
-                else:
-                    qkv = causal_conv1d_fn(
-                        qkv.transpose(1, 2),
-                        rearrange(self.conv1d.weight, "d 1 w -> d w"),
-                        self.conv1d.bias
-                    ).transpose(1, 2)
-                if cache_params is not None:
-                    _, conv_state = cache_params.conv_states[self.layer_idx]
-                    # If we just take qkv[:, :, -self.d_conv :], it will error if seqlen < self.d_conv
-                    # Instead F.pad will pad with zeros if seqlen < self.d_conv, and truncate otherwise.
-                    qkv_t = rearrange(qkv, "b l d -> b d l")
-                    conv_state.copy_(F.pad(qkv_t, (self.d_conv - qkv_t.shape[-1], 0)))  # Update state (B D W)
-            else:
-                _, conv_state = cache_params.conv_states[self.layer_idx]
-                assert qkv.shape[1] == 1, "Only support decoding with 1 token at a time for now"
-                qkv = qkv.squeeze(1)
-                # Conv step
-                if causal_conv1d_update is None:
-                    conv_state.copy_(torch.roll(conv_state, shifts=-1, dims=-1))  # Update state (B D W)
-                    conv_state[:, :, -1] = qkv
-                    qkv = torch.sum(conv_state * rearrange(self.conv1d.weight, "d 1 w -> d w"), dim=-1)  # (B D)
-                    if self.conv1d.bias is not None:
-                        qkv = qkv + self.conv1d.bias
-                else:
-                    qkv = causal_conv1d_update(
-                        qkv,
-                        conv_state,
-                        rearrange(self.conv1d.weight, "d 1 w -> d w"),
-                        self.conv1d.bias
-                    )
-                qkv = qkv.unsqueeze(1)
-        q, kv = qkv.split([self.num_heads * self.head_dim, self.num_heads_kv * 2 * self.head_dim], dim=-1)
-        q = rearrange(q, "... (h d) -> ... h d", d=self.head_dim)
-        kv = rearrange(kv, "... (two hkv d) -> ... two hkv d", two=2, d=self.head_dim)
+
+        # if self.d_conv > 0:
+        #     # The inference code for conv1d is pretty messy, should clean it up
+        #     if (cache_params is None or cache_params.seqlen_offset == 0):
+        #         if causal_conv1d_fn is None:
+        #             qkv = rearrange(
+        #                 self.conv1d(rearrange(qkv, "b s d -> b d s"))[..., :-(self.d_conv - 1)], "b d s -> b s d"
+        #             ).contiguous()
+        #         else:
+        #             qkv = causal_conv1d_fn(
+        #                 qkv.transpose(1, 2),
+        #                 rearrange(self.conv1d.weight, "d 1 w -> d w"),
+        #                 self.conv1d.bias
+        #             ).transpose(1, 2)
+        #         if cache_params is not None:
+        #             _, conv_state = cache_params.conv_states[self.layer_idx]
+        #             # If we just take qkv[:, :, -self.d_conv :], it will error if seqlen < self.d_conv
+        #             # Instead F.pad will pad with zeros if seqlen < self.d_conv, and truncate otherwise.
+        #             qkv_t = rearrange(qkv, "b l d -> b d l")
+        #             conv_state.copy_(F.pad(qkv_t, (self.d_conv - qkv_t.shape[-1], 0)))  # Update state (B D W)
+        #     else:
+        #         _, conv_state = cache_params.conv_states[self.layer_idx]
+        #         assert qkv.shape[1] == 1, "Only support decoding with 1 token at a time for now"
+        #         qkv = qkv.squeeze(1)
+        #         # Conv step
+        #         if causal_conv1d_update is None:
+        #             conv_state.copy_(torch.roll(conv_state, shifts=-1, dims=-1))  # Update state (B D W)
+        #             conv_state[:, :, -1] = qkv
+        #             qkv = torch.sum(conv_state * rearrange(self.conv1d.weight, "d 1 w -> d w"), dim=-1)  # (B D)
+        #             if self.conv1d.bias is not None:
+        #                 qkv = qkv + self.conv1d.bias
+        #         else:
+        #             qkv = causal_conv1d_update(
+        #                 qkv,
+        #                 conv_state,
+        #                 rearrange(self.conv1d.weight, "d 1 w -> d w"),
+        #                 self.conv1d.bias
+        #             )
+        #         qkv = qkv.unsqueeze(1)
+
+        q, kv = qkv.split([max(self.num_heads_list) * self.max_head_dim, max(self.num_heads_kv_list) * 2 * self.max_head_dim], dim=-1)
+        q = rearrange(q, "... (h d) -> ... h d", d=self.max_head_dim)
+        kv = rearrange(kv, "... (two hkv d) -> ... two hkv d", two=2, d=self.max_head_dim)
         if (
             cache_params is None
             or cache_params.seqlen_offset == 0
@@ -453,8 +516,8 @@ class MHA(nn.Module):
                 )
             if cache_params is None:
                 k, v = kv.unbind(dim=-3)
-                k = torch.repeat_interleave(k, dim=2, repeats=self.num_heads // self.num_heads_kv)
-                v = torch.repeat_interleave(v, dim=2, repeats=self.num_heads // self.num_heads_kv)
+                k = torch.repeat_interleave(k, dim=2, repeats=1)
+                v = torch.repeat_interleave(v, dim=2, repeats=1)
                 context = F.scaled_dot_product_attention(
                     q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), is_causal=self.causal, scale=self.softmax_scale
                 ).transpose(1, 2)
@@ -465,25 +528,399 @@ class MHA(nn.Module):
         context = rearrange(context, "... h d -> ... (h d)")
         if self.mlp_dim > 0:
             context = torch.cat([context, x_mlp], dim=-1)
-        out = self.out_proj(context)
+        out = self.mixop.forward(context,  [arch_params["hidden_size"], arch_params["num_heads"][self.layer_idx]], self.out_proj_mix_op_list, combi=True)
+        out = out + residual
         return out
     
 
+class MambaRMSNormGated(torch.nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states, gate=None):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+
+        if gate is not None:
+            hidden_states = hidden_states * nn.functional.silu(gate.to(torch.float32))
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+
+        return self.weight * hidden_states.to(input_dtype)
+
+class Mamba2Mixer(nn.Module):
+    """
+    Compute ∆, A, B, C, and D the state space parameters and compute the `contextualized_states`.
+    A, D are input independent (see Mamba paper [1] Section 3.5.2 "Interpretation of A" for why A isn't selective)
+    ∆, B, C are input-dependent (this is a key difference between Mamba and the linear time invariant S4,
+    and is why Mamba is called **selective** state spaces)
+    """
+
+    def __init__(self, config: EntangleHybridMamba2Config, mixop, layer_idx: int):
+        super().__init__()
+        self.num_heads_list = config.num_heads_list
+        self.hidden_size_list = config.hidden_size_list
+        self.ssm_state_size = config.state_size
+        self.conv_kernel_size = config.conv_kernel
+        # self.intermediate_size = int(config.expand * max(self.hidden_size_list))
+        # self.time_step_rank = int(config.time_step_rank)
+        self.layer_idx = layer_idx
+        self.use_conv_bias = config.use_conv_bias
+        self.activation = config.hidden_act
+        self.act = ACT2FN[config.hidden_act]
+
+        self.layer_norm_epsilon = config.layer_norm_epsilon
+        self.rms_norm = config.rms_norm
+
+        self.n_groups = config.n_groups
+
+        ## TODO: Double check head_dim = hidden_size * expand // num_heads
+        self.max_head_dim = config.expand * max(self.hidden_size_list)//max(self.num_heads_list)
+        self.chunk_size = config.chunk_size
+
+        self.time_step_limit = config.time_step_limit
+        self.time_step_min = config.time_step_min
+        self.time_step_max = config.time_step_max
+        self.mixop = mixop
+        self.expand = config.expand
+
+        # self.conv_dim = self.intermediate_size + 2 * self.n_groups * self.ssm_state_size
+        ### TODO: Double check
+        self.conv1d = nn.Conv1d(
+            in_channels=int(config.expand * max(self.hidden_size_list)) + 2 * self.n_groups * self.ssm_state_size,
+            out_channels=int(config.expand * max(self.hidden_size_list)) + 2 * self.n_groups * self.ssm_state_size,
+            bias=config.use_conv_bias,
+            kernel_size=config.conv_kernel,
+            groups=int(config.expand * max(self.hidden_size_list)) + 2 * self.n_groups * self.ssm_state_size,
+            padding=config.conv_kernel - 1,
+        )
+        conv1d_dim_list = [int(config.expand * hidden_size) + 2 * self.n_groups * self.ssm_state_size for hidden_size in self.hidden_size_list]
+        self.conv1d_mix_op = MixedConv1dV2(conv1d_dim_list, self.conv1d)
+        self.conv1d_mix_op_list = get_entangle_ops(self.conv1d_mix_op, conv1d_dim_list, "conv1d_mamba2")
+        
+        # projection of the input hidden states
+        in_proj = nn.Linear(
+            max(self.hidden_size_list),
+            2*(int(config.expand * max(self.hidden_size_list)) + self.n_groups * self.ssm_state_size) + max(self.num_heads_list),
+            bias=config.use_bias,
+        )
+
+        self.in_proj_mix_op = MixedLinearV2_InProj(self.hidden_size_list, self.num_heads_list, expand=self.expand, n_groups=self.n_groups, ssm_state_size=self.ssm_state_size, linear_layer=in_proj)
+        self.in_proj_mix_op_list = get_entangle_ops_combi(self.in_proj_mix_op, self.hidden_size_list, self.num_heads_list, "in_proj_mamba2")
+        # selective projection used to make dt, B and C input dependant
+
+        # time step projection (discretization)
+        # instantiate once and copy inv_dt in init_weights of PretrainedModel
+        self.dt_bias = nn.Parameter(torch.ones(max(self.num_heads_list)))
+        # self.dt_bias_mix_op_list = self.get_entangle_ops(self.in_proj_mix_op, self.hidden_size_list, "in_proj_mamba2")
+        
+        # S4D real initialization. These are not discretized!
+        # The core is to load them, compute the discrete states, then write the updated state. Keeps the memory bounded
+        A = torch.arange(1, max(self.num_heads_list) + 1)
+        self.A_log = nn.Parameter(torch.log(A))
+        self.A_log._no_weight_decay = True
+
+        norm_f = MambaRMSNormGated(int(config.expand * max(self.hidden_size_list)), eps=self.layer_norm_epsilon)
+        self.norm_f_op = MixedRMSNormGatedV2([int(config.expand * hidden_size) for hidden_size in self.hidden_size_list], int(config.expand * max(self.hidden_size_list)), norm_f)
+        self.norm_f_list = get_entangle_ops(self.norm_f_op, [int(config.expand * hidden_size) for hidden_size in self.hidden_size_list], f"mix_norm_f")
+
+        self.D = nn.Parameter(torch.ones(max(self.num_heads_list)))
+        self.D._no_weight_decay = True
+
+        out_proj = nn.Linear(int(config.expand * max(self.hidden_size_list)), max(self.hidden_size_list), bias=config.use_bias)
+        self.out_proj_mix_op = MixedLinearV2_OutProj(self.hidden_size_list, expand=config.expand, linear_layer=out_proj)
+        self.out_proj_mix_op_list = get_entangle_ops(self.out_proj_mix_op, self.hidden_size_list, "out_proj_mamba2")
+
+        self.use_bias = config.use_bias
+
+    def get_mixed_conv1d_weights(self, param_weights):
+        weights_mix = 0
+        bias_mix = 0
+        n_channels_list = [int(self.expand * hidden_size) + 2 * self.n_groups * self.ssm_state_size for hidden_size in self.hidden_size_list]
+        max_n_channels = max(n_channels_list)
+        for i, n_channels in enumerate(n_channels_list):
+            weight = self.conv1d.weight[:n_channels,:,:]
+            if self.conv1d.bias is None:
+                bias = None
+            else:
+                bias = self.conv1d.bias[:n_channels]
+            # pad weights and bias
+            weight = torch.nn.functional.pad(weight, (0, 0, 0, 0, 0, max_n_channels - weight.size(0)), "constant", 0)
+            if bias is None:
+                bias = None
+            else:
+                bias = torch.nn.functional.pad(bias, (0, max_n_channels - bias.shape[0]), "constant", 0)
+            weights_mix += param_weights[i]*weight
+            if bias is not None:
+                bias_mix += param_weights[i]*bias
+            else:
+                bias_mix = None
+        return weights_mix, bias_mix
+
+        
+    def cuda_kernels_forward(
+        self,
+        hidden_states: torch.Tensor,
+        cache_params: Optional[HybridMamba2Cache] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        arch_params: dict = None, 
+        use_argmax: Optional[bool] = False
+    ):
+        if use_argmax:
+            # hidden_size_argmax_id = torch.argmax(torch.tensor(arch_params["hidden_size"]), dim=-1)
+            # num_heads_argmax_id = torch.argmax(torch.tensor(arch_params['num_heads'][self.layer_idx]), dim=-1)
+            raise NotImplementedError("Argmax not implemented for Mamba2")
+            
+        else:
+            # 1. Gated MLP's linear projection
+            hidden_states = apply_mask_to_padding_states(hidden_states, attention_mask)
+            projected_states = self.mixop.forward(hidden_states, [arch_params["hidden_size"], arch_params["num_heads"][self.layer_idx]], self.in_proj_mix_op_list, combi=True)
+
+
+            # Set up dimensions for reshapes later
+            batch_size, seq_len, _ = hidden_states.shape
+            groups_time_state_size = self.n_groups * self.ssm_state_size
+            intermediate_size = int(self.expand * max(self.hidden_size_list))
+            conv_dim = intermediate_size + 2 * self.n_groups * self.ssm_state_size
+            d_mlp = (
+                projected_states.shape[-1]
+                - 2 * intermediate_size
+                - 2 * self.n_groups * self.ssm_state_size
+                - max(self.num_heads_list)
+            ) // 2
+            _, _, gate, hidden_states_B_C, dt = projected_states.squeeze(1).split(
+                [d_mlp, d_mlp, intermediate_size, conv_dim, max(self.num_heads_list)], dim=-1
+            )
+            mixed_conv1d_weights, mixed_conv1d_bias = self.get_mixed_conv1d_weights(arch_params['hidden_size'])
+            # Single step calculations via cache
+            if cache_params is not None and cache_position is not None and cache_position[0] > 0:
+                # 2. Convolution sequence transformation
+                hidden_states_B_C = causal_conv1d_update(
+                    hidden_states_B_C,
+                    cache_params.conv_states[self.layer_idx],
+                    mixed_conv1d_weights.squeeze(1),
+                    mixed_conv1d_bias,
+                    self.activation,
+                )
+
+                hidden_states, B, C = torch.split(
+                    hidden_states_B_C,
+                    [intermediate_size, groups_time_state_size, groups_time_state_size],
+                    dim=-1,
+                )
+                # 3. SSM transformation
+                B = B.view(batch_size, self.n_groups, B.shape[1] // self.n_groups) # (batch_size, n_groups, ssm_state_size)
+                C = C.view(batch_size, self.n_groups, C.shape[1] // self.n_groups) # (batch_size, n_groups, ssm_state_size)
+                hidden_states_reshaped = hidden_states.view(batch_size, max(self.num_heads_list), self.max_head_dim)
+                dt_bias = self.dt_bias[:, None, ...].expand(-1, self.max_head_dim)
+                D = self.D[:, None, ...].expand(-1, self.max_head_dim)
+                A = -torch.exp(self.A_log.float())  # (nheads,)
+                A = A[:, None, ...][:, :, None].expand(-1, self.max_head_dim, self.ssm_state_size).to(dtype=torch.float32) # (nheads, head_dim, ssm_state_size)
+                dt = dt.squeeze(2)  # (batch_size, seq_len, nheads)        
+                A_mix, dt_mix, D_mix, dt_bias_mix = 0,0,0,0
+                for i, num_heads in enumerate(self.num_heads_list):
+                    # Compute dt_mix
+                    sampled_dt = dt[:,:,:num_heads]
+                    sampled_dt = torch.nn.functional.pad(sampled_dt, (0, max(self.num_heads_list)-num_heads, 0, 0), "constant", 0)
+                    dt_mix += arch_params['num_heads'][self.layer_idx][i]*sampled_dt
+
+                    for j, hidden_size in enumerate(self.hidden_size_list):
+                        head_dim = self.expand * hidden_size // num_heads
+                        ## Compute A_mix
+                        sampled_A = A[:num_heads,:head_dim,:]
+                        sampled_A = torch.nn.functional.pad(sampled_A, (0, 0, 0, self.max_head_dim-head_dim, 0, max(self.num_heads_list)-num_heads), "constant", 0)
+                        A_mix += arch_params['num_heads'][self.layer_idx][i] * arch_params['hidden_size'][j] * sampled_A
+                            
+                        ## Compute dt_bias_mix
+                        # (nheads, head_dim)
+                        sampled_dt_bias = dt_bias[:num_heads,:head_dim]
+                        sampled_dt_bias = torch.nn.functional.pad(sampled_dt_bias, (0, self.max_head_dim-head_dim, 0, max(self.num_heads_list)-num_heads), "constant", 0)
+                    
+                        dt_bias_mix += arch_params['num_heads'][self.layer_idx][i] * arch_params['hidden_size'][j] * sampled_dt_bias
+
+                        ## Compute D_mix
+                        sampled_D = D[:num_heads,:head_dim]
+                        sampled_D = torch.nn.functional.pad(sampled_D, (0, self.max_head_dim-head_dim, 0, max(self.num_heads_list)-num_heads), "constant", 0)
+                        D_mix += arch_params['num_heads'][self.layer_idx][i] * arch_params['hidden_size'][j] * sampled_D
+
+
+                hidden_states = selective_state_update(
+                    cache_params.ssm_states[self.layer_idx],
+                    hidden_states_reshaped,
+                    dt_mix,
+                    A_mix,
+                    B,
+                    C,
+                    D_mix,
+                    z=None,
+                    dt_bias=dt_bias_mix,
+                    dt_softplus=True,
+                )
+                hidden_states = hidden_states.view(batch_size, max(self.num_heads_list) * self.max_head_dim)
+                hidden_states = self.mixop.forward(hidden_states, arch_params["hidden_size"], self.norm_f_list, gate=gate)
+
+                # 4. Final linear projection
+                out = self.mixop.forward(hidden_states, arch_params["hidden_size"], self.out_proj_mix_op_list)[:, None, ...]
+            else:
+                A = -torch.exp(self.A_log.float())  # (num_heads) or (intermediate_size, state_size)
+                dt_limit_kwargs = {} if self.time_step_limit == (0.0, float("inf")) else {"dt_limit": self.time_step_limit}
+                
+                # 2. Convolution sequence transformation
+                # Init cache
+                if cache_params is not None:
+                    hidden_states_B_C_transposed = hidden_states_B_C.transpose(1, 2)
+                    conv_states = nn.functional.pad(
+                        hidden_states_B_C_transposed,
+                        (cache_params.conv_kernel_size - hidden_states_B_C_transposed.shape[-1], 0),
+                    )
+                    cache_params.update_conv_state(
+                        layer_idx=self.layer_idx, new_conv_state=conv_states, cache_init=True
+                    )
+
+                if self.activation not in ["silu", "swish"]:
+                    hidden_states_B_C = self.act(
+                        self.mixop.forward(hidden_states_B_C.transpose(1, 2), arch_params['hidden_size'], self.conv1d_mix_op_list)[..., :seq_len].transpose(1, 2)
+                    ) # self.conv1d(hidden_states_B_C.transpose(1, 2))
+                else:
+                    hidden_states_B_C = causal_conv1d_fn(
+                        x=hidden_states_B_C.transpose(1, 2),
+                        weight=mixed_conv1d_weights.squeeze(1),
+                        bias=mixed_conv1d_bias,
+                        activation=self.activation,
+                    ).transpose(1, 2)
+                    
+                hidden_states_B_C = apply_mask_to_padding_states(hidden_states_B_C, attention_mask)
+                hidden_states, B, C = torch.split(
+                    hidden_states_B_C,
+                    [intermediate_size, groups_time_state_size, groups_time_state_size],
+                    dim=-1,
+                )
+                A_mix, dt_mix, D_mix, dt_bias_mix = 0,0,0,0
+                for i, num_heads in enumerate(self.num_heads_list):
+                    # Compute dt_mix
+                    sampled_dt = dt[:,:,:num_heads]
+                    sampled_dt = torch.nn.functional.pad(sampled_dt, (0, max(self.num_heads_list)-num_heads, 0, 0), "constant", 0)
+                    dt_mix += arch_params['num_heads'][self.layer_idx][i]*sampled_dt
+                    ## Compute A_mix
+                    sampled_A = A[:num_heads]
+                    sampled_A = torch.nn.functional.pad(sampled_A, (0, max(self.num_heads_list)-num_heads), "constant", 0)
+                    A_mix += arch_params['num_heads'][self.layer_idx][i] * sampled_A
+                            
+                    ## Compute dt_bias_mix
+                    sampled_dt_bias = self.dt_bias[:num_heads]
+                    sampled_dt_bias = torch.nn.functional.pad(sampled_dt_bias, (0, max(self.num_heads_list)-num_heads), "constant", 0)
+                    
+                    dt_bias_mix += arch_params['num_heads'][self.layer_idx][i] * sampled_dt_bias
+
+                    ## Compute D_mix
+                    sampled_D = self.D[:num_heads]
+                    sampled_D = torch.nn.functional.pad(sampled_D, (0, max(self.num_heads_list)-num_heads), "constant", 0)
+                    D_mix += arch_params['num_heads'][self.layer_idx][i]  * sampled_D
+
+                # 3. SSM transformation
+                scan_output, ssm_state = mamba_chunk_scan_combined(
+                    hidden_states.view(batch_size, seq_len, max(self.num_heads_list), self.max_head_dim),
+                    dt_mix,
+                    A_mix,
+                    B.view(batch_size, seq_len, self.n_groups, -1),
+                    C.view(batch_size, seq_len, self.n_groups, -1),
+                    chunk_size=self.chunk_size,
+                    D=D_mix,
+                    z=None,
+                    seq_idx=None,
+                    return_final_states=True,
+                    dt_bias=dt_bias_mix,
+                    dt_softplus=True,
+                    **dt_limit_kwargs,
+                )
+
+                # Init cache
+                if ssm_state is not None and cache_params is not None:
+                    cache_params.update_ssm_state(layer_idx=self.layer_idx, new_ssm_state=ssm_state)
+
+                scan_output = scan_output.view(batch_size, seq_len, -1)
+                # Multiply "gate" branch and apply extra normalization layer
+                scan_output  = self.mixop.forward(scan_output, arch_params["hidden_size"], self.norm_f_list, gate=gate)
+
+                # 4. Final linear projection
+                out = self.mixop.forward(scan_output, arch_params["hidden_size"], self.out_proj_mix_op_list)
+            
+        
+        return out
+
+    # fmt: on
+
+    def forward(
+        self,
+        hidden_states,
+        cache_params: Optional[HybridMamba2Cache] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        arch_params: dict=None,
+        use_argmax: Optional[bool] = False
+    ):
+        return self.cuda_kernels_forward(hidden_states, cache_params, cache_position, attention_mask, arch_params=arch_params,use_argmax=use_argmax)
+
+class Mamba2Block(nn.Module):
+    def __init__(self, config, mixop, layer_idx):
+        super().__init__()
+        self.config = config
+        self.layer_idx = layer_idx
+        self.residual_in_fp32 = config.residual_in_fp32
+        self.hidden_size_list = config.hidden_size_list
+        self.norm_f = MambaRMSNormGated(max(self.hidden_size_list), eps=config.layer_norm_epsilon)
+        self.norm_f_op = MixedRMSNormGatedV2(self.hidden_size_list, max(self.hidden_size_list), self.norm_f)
+        self.norm_f_list = get_entangle_ops(self.norm_f_op, self.hidden_size_list, f"block_norm_f") # _{layer_idx}
+
+        self.mixer = Mamba2Mixer(config, mixop, layer_idx=layer_idx)
+        self.mixop = mixop
+
+    def forward(
+        self,
+        hidden_states,
+        cache_params: Optional[HybridMamba2Cache] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        arch_params: dict = None,
+    ):
+        residual = hidden_states
+        hidden_states = self.mixop.forward(hidden_states.to(dtype=self.norm_f.weight.dtype), 
+                        arch_params["hidden_size"], self.norm_f_list)
+        if self.residual_in_fp32:
+            residual = residual.to(torch.float32)
+
+        hidden_states = self.mixer(
+            hidden_states, cache_params=cache_params, cache_position=cache_position, attention_mask=attention_mask, arch_params=arch_params
+        )
+        hidden_states = residual + hidden_states
+        return hidden_states
+
     
 class Mamba2AttentionModel(Mamba2PreTrainedModel):
-    def __init__(self, config, mixop):
+    def __init__(self, config, mixop,  max_n_layers, hidden_size_list, max_hidden_size):
         super().__init__(config)
 
-        self.embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.embeddings = nn.Embedding(config.vocab_size, max_hidden_size).to(config.device)
+        self.embedding_table_op =  MixedEmbeddingV2(hidden_size_list, max_embed_dim=max_hidden_size, embedding=self.embeddings)
+        self.embedding_table_list = get_entangle_ops(self.embedding_table_op, hidden_size_list, "embedding_table")
         tmp_layers = []
-        for idx in range(config.num_hidden_layers):
+        for idx in range(max_n_layers):
+            ####### TODO: Fix for hybrid models, Currently the model only consists of Mamba blocks
             if idx in config.attn_layer_idxs:
-                tmp_layers.append(MHA(**config.attn_params, embed_dim=config.hidden_size, d_conv=config.conv_kernel, layer_idx=idx))
+                tmp_layers.append(MHA(config, mixop=mixop, layer_idx=idx)) # d_conv=config.conv_kernel, 
             else:
-                tmp_layers.append(Mamba2Block(config, layer_idx=idx))
+                tmp_layers.append(Mamba2Block(config, mixop, layer_idx=idx))
         self.layers = nn.ModuleList(tmp_layers) # [Mamba2Block(config, layer_idx=idx) for idx in range(config.num_hidden_layers)]
-        self.gradient_checkpointing = False
-        self.norm_f = Mamba2RMSNorm(config.hidden_size, eps=config.layer_norm_epsilon)
+
+        norm_f = MambaRMSNormGated(max_hidden_size, eps=config.layer_norm_epsilon)
+
+        self.norm_f_op = MixedRMSNormGatedV2(hidden_size_list, max_hidden_size, norm_f)
+        self.norm_f_list = get_entangle_ops(self.norm_f_op, hidden_size_list, "last_norm_f")
+
+        self.mixop = mixop
         # Initialize weights and apply final processing
         self._register_load_state_dict_pre_hook(self.load_hook)
         self.post_init()
@@ -506,26 +943,20 @@ class Mamba2AttentionModel(Mamba2PreTrainedModel):
         inputs_embeds: Optional[torch.LongTensor] = None,
         cache_params: Optional[HybridMamba2Cache] = None,
         use_cache: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        **kwargs,
+        attention_mask: Optional[torch.Tensor] = None, 
+        arch_params:dict =None,
     ) -> Union[Tuple, Mamba2Output]:
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
         use_cache = use_cache if use_cache is not None else (self.config.use_cache if not self.training else False)
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
         if (input_ids is None) ^ (inputs_embeds is not None):  # ^ is python for xor
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
         if inputs_embeds is None:
-            inputs_embeds = self.embeddings(input_ids)
+            # inputs_embeds = self.embeddings(input_ids)
+            inputs_embeds = self.mixop.forward(input_ids, arch_params["hidden_size"], self.embedding_table_list)
 
-        if self.gradient_checkpointing and self.training and use_cache:
-            use_cache = False
 
         if use_cache:
             if cache_params is None:
@@ -547,30 +978,30 @@ class Mamba2AttentionModel(Mamba2PreTrainedModel):
             cache_params = None
 
         hidden_states = inputs_embeds
-        all_hidden_states = () if output_hidden_states else None
+        all_hidden_states = None
+        
+        depth_output_list = []
+        i = 0
         for mixer_block in self.layers:
-            if self.gradient_checkpointing and self.training:
-                hidden_states = self._gradient_checkpointing_func(
-                    mixer_block.__call__, hidden_states, cache_params, cache_position, attention_mask
-                )
-            else:
-                hidden_states = mixer_block(
-                    hidden_states,
-                    cache_params=cache_params,
-                    cache_position=cache_position,
-                    attention_mask=attention_mask,
-                )
+            hidden_states = mixer_block(
+                hidden_states,
+                cache_params=cache_params,
+                cache_position=cache_position,
+                attention_mask=attention_mask,
+                arch_params=arch_params
+            )
+            if i+1 in self.config.num_hidden_layers_list:
+                depth_output_list.append(hidden_states)
+            i += 1
 
-            if output_hidden_states:
-                all_hidden_states = all_hidden_states + (hidden_states,)
-
+        hidden_states = self.mixop.forward_depth(
+            depth_output_list, arch_params["num_hidden_layers"])
+        
         if use_cache:
             cache_params.seqlen_offset += inputs_embeds.shape[1]
 
-        hidden_states = self.norm_f(hidden_states)
+        hidden_states = self.mixop.forward(hidden_states, arch_params['hidden_size'], self.norm_f_list) 
 
-        if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
 
         if not return_dict:
             return tuple(v for v in [hidden_states, cache_params, all_hidden_states] if v is not None)
@@ -614,10 +1045,35 @@ class HybridMamba2ForCausalLM(Mamba2PreTrainedModel, GenerationMixin):
 
     def __init__(self, config):
         super().__init__(config)
-        self.backbone = Mamba2AttentionModel(config, mixop)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.config = config
+
+        self.layer_list = config.num_hidden_layers_list
+        self.max_n_layers = max(self.layer_list)
+
+        self.num_head_list = config.num_heads_list
+        self.max_head = max(self.num_head_list)
+
+        self.hidden_size_list = config.hidden_size_list
+        self.max_hidden_size = max(self.hidden_size_list)
+        
+        # self.attn_num_heads_list = config["attn_num_heads"]
+        # self.max_attn_num_heads = max(self.attn_num_heads_list)
+
+        # self.attn_embed_dim_list = config["attn_embed_dim"]
+        # self.max_attn_embed_dim = max(self.attn_embed_dim_list)
+
+        self.mixop = get_mixop(config.mixop, use_we_v2=True) # use_we_v2=True
+        self.sampler = get_sampler(config.mixop)
+
+        self.backbone = Mamba2AttentionModel(config, self.mixop, self.max_n_layers, self.hidden_size_list, self.max_hidden_size)
+
+        
+        self.lm_head = nn.Linear(max(self.hidden_size_list), config.vocab_size, bias=False)
+        self.lm_head_op = MixedLinearHeadV2(self.hidden_size_list, self.max_hidden_size, self.lm_head)
+        self.lm_head_list = get_entangle_ops(self.lm_head_op, self.hidden_size_list, "lm_head")
         # Initialize weights and apply final processing
         self.post_init()
+        self._init_arch_parameters()
 
     def get_output_embeddings(self):
         return self.lm_head
@@ -630,6 +1086,32 @@ class HybridMamba2ForCausalLM(Mamba2PreTrainedModel, GenerationMixin):
 
     def set_input_embeddings(self, new_embeddings):
         return self.backbone.set_input_embeddings(new_embeddings)
+
+    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
+        # start with all of the candidate parameters
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        # filter out those that do not require grad
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {'params': decay_params, 'weight_decay': weight_decay},
+            {'params': nodecay_params, 'weight_decay': 0.0}
+        ]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+        # Create AdamW optimizer and use the fused version if it is available
+        fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+        use_fused = fused_available and device_type == 'cuda'
+        extra_args = dict(fused=True) if use_fused else dict()
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
+        print(f"using fused AdamW: {use_fused}")
+
+        return optimizer
 
     def prepare_inputs_for_generation(
         self,
@@ -715,22 +1197,26 @@ class HybridMamba2ForCausalLM(Mamba2PreTrainedModel, GenerationMixin):
             `labels = input_ids` Indices are selected in `[-100, 0, ..., config.vocab_size]` All labels set to `-100`
             are ignored (masked), the loss is only computed for labels in `[0, ..., config.vocab_size]`
         """
+        arch_parameters = self.sampler.sample_step(self.get_arch_parameters())
+        arch_params_sampled_dict = self.assign_arch_parameters(arch_parameters)
+        
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         mamba2_outputs = self.backbone(
-            input_ids,
+            input_ids=input_ids,
             cache_params=cache_params,
             inputs_embeds=inputs_embeds,
-            output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             use_cache=use_cache,
             cache_position=cache_position,
             attention_mask=attention_mask,
+            arch_params=arch_params_sampled_dict
         )
         hidden_states = mamba2_outputs[0]
 
-        logits = self.lm_head(hidden_states.to(self.lm_head.weight.dtype)).float()
-
+        logits = self.mixop.forward(
+                hidden_states.to(self.lm_head.weight.dtype), arch_params_sampled_dict["hidden_size"], self.lm_head_list).float()
+        
         loss = None
         if labels is not None:
             # move labels to correct device to enable model parallelism
@@ -746,9 +1232,71 @@ class HybridMamba2ForCausalLM(Mamba2PreTrainedModel, GenerationMixin):
             output = (logits,) + mamba2_outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
-        return HybridMamba2CausalLMOutput(
-            loss=loss,
-            logits=logits,
-            cache_params=mamba2_outputs.cache_params,
-            hidden_states=mamba2_outputs.hidden_states,
-        )
+        return logits, loss
+        
+
+    
+    def estimate_mfu(self, fwdbwd_per_iter, dt): 
+        """ estimate model flops utilization (MFU) in units of A100 bfloat16 peak FLOPS """
+        # first estimate the number of flops we do per iteration.
+        # see PaLM paper Appendix B as ref: https://arxiv.org/abs/2204.02311
+        ####### TODO: DOUBLE CHECK FOR MAMBA #####
+        N = self.get_num_params()
+        # L, H, Q, T = max(self.layer_list), max(self.num_head_list), max(self.hidden_size_list) * self.config.expand // max(self.num_head_list), self.config.chunk_size
+        # flops_per_token = 6*N + 24*L*H*Q*T
+        # flops_per_fwdbwd = flops_per_token * T
+        # flops_per_iter = flops_per_fwdbwd * fwdbwd_per_iter
+        ## For Mamba2 Blocks:
+        flops_per_iter = ((6 * N + 9 * self.config.state_size * max(self.hidden_size_list)*max(self.layer_list))  * self.config.chunk_size) * fwdbwd_per_iter
+        # express our flops throughput as ratio of A100 bfloat16 peak flops
+        flops_achieved = flops_per_iter * (1.0/dt) # per second
+        flops_promised = 15.62e12 # 312e12 # A100 GPU bfloat16 peak flops is 312 TFLOPS
+        mfu = flops_achieved / flops_promised
+        return mfu
+
+    def get_num_params(self, non_embedding=True):
+        """
+        Return the number of parameters in the model.
+        For non-embedding count (default), the position embeddings get subtracted.
+        The token embeddings would too, except due to the parameter sharing these
+        params are actually used as weights in the final layer, so we include them.
+        """
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.backbone.embeddings.weight.numel()
+        return n_params
+    
+    def _init_arch_parameters(self):
+        self.arch_parameter_dict = {}
+        self.arch_num_hidden_layers = nn.Parameter(
+            1e-3 * torch.randn([len(self.config.num_hidden_layers_list)]))
+        self.arch_parameter_dict["num_hidden_layers"] = self.arch_num_hidden_layers
+        self.arch_hidden_size = nn.Parameter(
+            1e-3 * torch.randn([len(self.config.hidden_size_list)]))
+        self.arch_parameter_dict["hidden_size"] = self.arch_hidden_size
+        self.arch_num_heads = nn.Parameter(
+            1e-3 * torch.randn([max(self.config.num_hidden_layers_list),len(self.config.num_heads_list)]))
+        self.arch_parameter_dict["num_heads"] = self.arch_num_heads
+        
+    def assign_arch_parameters(self, arch_parameters):
+        arch_params_dummy = {}
+        for i, k in enumerate(self.arch_parameter_dict.keys()):
+            arch_params_dummy[k] = arch_parameters[i]
+        return arch_params_dummy
+    
+    def get_arch_parameters(self):
+        return [self.arch_num_hidden_layers, self.arch_hidden_size, self.arch_num_heads]
+
+    def get_model_parameters(self):
+        return list(set(self.parameters()) - set(self.get_arch_parameters()))
+    
+    def get_best_config(self):
+        #print(f"arch parameter {k}: {torch.nn.functional.softmax(model.module.arch_parameter_dict[k], dim=-1)}")
+        best_config = {}
+        #for k in self.arch_parameter_dict.keys():
+        best_config["num_hidden_layers"] = self.layer_list[torch.argmax(torch.nn.functional.softmax(self.arch_parameter_dict["num_hidden_layers"], dim=-1)).item()]
+        best_config["hidden_size"] = self.hidden_size_list[torch.argmax(torch.nn.functional.softmax(self.arch_parameter_dict["hidden_size"], dim=-1)).item()]
+        best_num_heads = torch.argmax(torch.nn.functional.softmax(self.arch_parameter_dict["num_heads"], dim=-1),dim=-1)
+        #print(best_num_heads)
+        best_config["num_heads"] = [self.num_head_list[best_num_heads[i]] for i in range(best_num_heads.shape[0])]
+        return best_config

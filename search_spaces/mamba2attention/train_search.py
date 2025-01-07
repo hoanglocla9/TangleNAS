@@ -27,17 +27,17 @@ import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 from architect import ArchitectV1
-from model_search import GPTConfig, GPT
+from model_search import EntangleHybridMamba2Config, HybridMamba2ForCausalLM
 import argparse
 import time
 
-parser = argparse.ArgumentParser(description="Train a GPT model.")
+parser = argparse.ArgumentParser(description="Train a Mamba2Attention model.")
 parser.add_argument("--optimizer", type=str, default="drnas")
 parser.add_argument("--seed", type=int, default=42, help="random seed")
 parser.add_argument("--train_portion", type=float, default=0.5, help="train fraction")
 
 parser.add_argument(
-    "--data_dir", type=str, default="search_spaces/nanoGPT/data/tinystories"
+    "--data_dir", type=str, default="/home/picarib/Projects/TangleNAS/search_spaces/mamba2attention/data/tinystories"
 )
 args, _ = parser.parse_known_args()
 print(args)
@@ -60,18 +60,39 @@ init_from = "scratch"  # 'scratch' or 'resume' or 'gpt2*'
 
 # WandB logging
 wandb_log = False  # disabled by default
-wandb_project = "tinystories_with_we"
+wandb_project = "mamba2attention_tinystories_we"
 
 # Data
 gradient_accumulation_steps = 5 * 6  # used to simulate larger batch sizes
-batch_size = 2  # if gradient_accumulation_steps > 1, this is the micro-batch size
-block_size = 1024
+batch_size = 4  # if gradient_accumulation_steps > 1, this is the micro-batch size
+block_size = 256
 
+def compute_attn_layer_idx(num_hidden_layers, attn_ratio):
+    ## Algorithm 1 of paper: https://arxiv.org/pdf/2406.07887
+    num_attn_layers = round(min(num_hidden_layers) * attn_ratio)
+    num_mamba_sections = num_attn_layers + 1
+    num_mamba_layers = min(num_hidden_layers) - num_attn_layers
+    mamba_section_len = num_mamba_layers/num_mamba_sections
+    x = mamba_section_len
+    results = []
+    for i in range(min(num_hidden_layers)):
+        if x < 0.5:
+            results.append(i)
+            x += mamba_section_len
+        else:
+            x -= 1
+    return results
 # Model
-n_layer = [10, 11, 12]
-n_heads = [6, 8, 12]
-n_embd = [192, 384, 768]  # for gpt2, 768 is the largest
-mlp_ratio = [2, 3, 4]
+attn_ratio =  0.1 # 0.1#
+num_hidden_layers = [16, 17, 18]
+num_heads = [16, 24, 32]
+head_dim = [64, 128]
+hidden_size = [384, 768, 1024]  # for gpt2, 768 is the largest
+# attn_num_heads = [16, 24, 32]
+# attn_embed_dim = [384, 768, 1152]
+attn_layer_idxs = compute_attn_layer_idx(num_hidden_layers, attn_ratio)
+print("attn_layer_idxs", attn_layer_idxs)
+chunk_size = 256
 
 dropout = 0.0  # for pretraining 0 is good, for finetuning try 0.1+
 bias = False  # do we use bias inside LayerNorm and Linear layers?
@@ -105,7 +126,7 @@ config_keys = [
     if not k.startswith("_") and isinstance(v, (int, float, bool, str))
 ]
 exec(
-    open("search_spaces/nanoGPT/configurator.py").read()
+    open("/home/picarib/Projects/TangleNAS/search_spaces/mamba2attention/configurator.py").read()
 )  # overrides from command line or config file
 config = {k: globals()[k] for k in config_keys}  # will be useful for logging
 # -----------------------------------------------------------------------------
@@ -206,18 +227,33 @@ if os.path.exists(meta_path):
     print(f"found vocab_size = {meta_vocab_size} (inside {meta_path})")
 
 # model init
+# model_args = dict(
+#     num_layers=n_layer,
+#     num_heads=n_heads,
+#     embed_dim=n_embd,
+#     block_size=block_size,
+#     bias=bias,
+#     mlp_ratio=mlp_ratio,
+#     vocab_size=None,
+#     dropout=dropout,
+#     mixop=optimizer,
+#     batch_size=batch_size,
+# )
 model_args = dict(
-    num_layers=n_layer,
-    num_heads=n_heads,
-    embed_dim=n_embd,
-    block_size=block_size,
+    num_hidden_layers_list=num_hidden_layers,
+    num_heads_list=num_heads,
+    hidden_size_list=hidden_size,
+    attn_layer_idxs=attn_layer_idxs,
+    chunk_size=chunk_size,
     bias=bias,
-    mlp_ratio=mlp_ratio,
     vocab_size=None,
     dropout=dropout,
+    state_size=128,
+    n_groups=1,
     mixop=optimizer,
     batch_size=batch_size,
-)
+    device='cuda'
+)  # start with model_args from command line
 
 if init_from == "scratch":
     # init a new model from scratch
@@ -225,52 +261,17 @@ if init_from == "scratch":
     # determine the vocab size we'll use for from-scratch training
     if meta_vocab_size is None:
         print(
-            "defaulting to vocab_size of GPT-2 to 50304 (50257 rounded up for efficiency)"
+            "defaulting to vocab_size of Mamba2Attention to 50304 (50257 rounded up for efficiency)"
         )
     model_args["vocab_size"] = meta_vocab_size if meta_vocab_size is not None else 50304
-    model = GPT(model_args, use_we_v2=True)
+    model_conf = EntangleHybridMamba2Config(**model_args)
+    model = HybridMamba2ForCausalLM(model_conf)
+    print(model)
 elif init_from == "resume":
-    print(f"Resuming training from {out_dir}")
-    # resume training from a checkpoint.
-    ckpt_path = os.path.join(out_dir, "ckpt.pt")
-    checkpoint = torch.load(ckpt_path, map_location=device)
-    checkpoint_model_args = checkpoint["model_args"]
+    raise NotImplementedError("init_from='resume' not yet implemented")
+elif init_from.startswith("mamba2attention"):
+    raise NotImplementedError("init_from='mamba2attention*' not yet implemented")
 
-    # force these config attributes to be equal otherwise we can't even resume training
-    # the rest of the attributes (e.g. dropout) can stay as desired from command line
-    for k in ["n_layer", "n_head", "n_embd", "block_size", "bias", "vocab_size"]:
-        model_args[k] = checkpoint_model_args[k]
-
-    # create the model
-    gptconf = GPTConfig(**model_args)
-    model = GPT(gptconf)
-    state_dict = checkpoint["model"]
-
-    # fix the keys of the state dictionary :(
-    # honestly no idea how checkpoints sometimes get this prefix, have to debug more
-    unwanted_prefix = "_orig_mod."
-    for k, v in list(state_dict.items()):
-        if k.startswith(unwanted_prefix):
-            state_dict[k[len(unwanted_prefix) :]] = state_dict.pop(k)
-
-    model.load_state_dict(state_dict)
-    iter_num = checkpoint["iter_num"]
-    best_val_loss = checkpoint["best_val_loss"]
-elif init_from.startswith("gpt2"):
-    print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
-    # initialize from OpenAI GPT-2 weights
-    override_args = dict(dropout=dropout)
-    model = GPT.from_pretrained(init_from, override_args)
-    # read off the created config params, so we can store them into checkpoint correctly
-    for k in ["n_layer", "n_head", "n_embd", "block_size", "bias", "vocab_size"]:
-        model_args[k] = getattr(model.config, k)
-
-# crop down the model block size if desired, using model surgery
-if block_size < model.config["block_size"]:
-    model.crop_block_size(block_size)
-    model_args[
-        "block_size"
-    ] = block_size  # so that the checkpoint will have the right value
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
@@ -310,7 +311,7 @@ def estimate_loss(train_data, val_data):
         for k in range(eval_iters):
             X, Y = get_batch(split, train_data=train_data, val_data=val_data)
             with ctx:
-                logits, loss = model(X, Y)
+                logits, loss = model(X, labels=Y)
             losses[k] = loss.item()
         out[split] = losses.mean()
     model.train()
@@ -418,7 +419,7 @@ while True:
                 micro_step == gradient_accumulation_steps - 1
             )
         with ctx:
-            arch_logits, arch_loss = model(X_arch, Y_arch)
+            arch_logits, arch_loss = model(X_arch, labels=Y_arch)
             arch_loss = (
                 arch_loss / gradient_accumulation_steps
             )  # scale the loss to account for gradient accumulation
@@ -448,7 +449,7 @@ while True:
                 micro_step == gradient_accumulation_steps - 1
             )
         with ctx:
-            logits, loss = model(X_train, Y_train)
+            logits, loss = model(X_train, labels=Y_train)
             loss = (
                 loss / gradient_accumulation_steps
             )  # scale the loss to account for gradient accumulation

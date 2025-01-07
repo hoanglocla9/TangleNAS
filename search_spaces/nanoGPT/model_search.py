@@ -200,7 +200,7 @@ class GPT(nn.Module):
             wpe = nn.Embedding(self.block_size, self.max_embed_dim),
             ln_f = LayerNorm(self.max_embed_dim, bias=config["bias"]),
         ))
-        self.transformer_h = nn.ModuleList([Block(config,self.mixop) for _ in range(self.max_layer)])
+        self.transformer_h = nn.ModuleList([Block(config, self.mixop) for _ in range(self.max_layer)])
         self.transformer_drop = nn.Dropout(self.dropout)
         lm_head = nn.Linear(self.max_embed_dim, self.vocab_size, bias=False)
         transformer.wte.weight = lm_head.weight
@@ -284,7 +284,7 @@ class GPT(nn.Module):
         # forward the GPT model itself
         # tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
         tok_emb = self.mixop.forward(
-        idx, arch_params_sampled_dict["embed_dim"], self.token_embedding_table_list)
+            idx, arch_params_sampled_dict["embed_dim"], self.token_embedding_table_list)
         pos_emb = self.mixop.forward(
         pos, arch_params_sampled_dict["embed_dim"], self.position_embedding_table_list)
         x = self.transformer_drop(tok_emb + pos_emb)

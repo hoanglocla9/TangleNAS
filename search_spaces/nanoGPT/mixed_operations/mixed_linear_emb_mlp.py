@@ -79,6 +79,7 @@ class MixedLinearV2(nn.Module):
                         bias = F.pad(bias, (0, self.max_out_dim -
                              bias.shape[-1]), "constant", 0)
                     weights_mix += weights[k]*weight
+                    
                     if bias is not None:
                         bias_mix += weights[k]*bias
                     else:

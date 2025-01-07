@@ -1,5 +1,5 @@
 # Taken from Karpathy's NanoGPT repository (https://github.com/karpathy/nanoGPT/blob/master/data/openwebtext/prepare.py)
-# and modified to work with TinyStories
+# and modified to work with alpaca
 
 import os
 from tqdm import tqdm
@@ -16,7 +16,7 @@ num_proc = 16
 num_proc_load_dataset = num_proc
 
 if __name__ == '__main__':
-    dataset = load_dataset("roneneldan/TinyStories", num_proc=num_proc_load_dataset)
+    dataset = load_dataset("tatsu-lab/alpaca", num_proc=num_proc_load_dataset)
 
     # we now want to tokenize the dataset. first define the encoding function (gpt2 bpe)
     # enc = tiktoken.get_encoding("gpt2")
@@ -38,18 +38,18 @@ if __name__ == '__main__':
         num_proc=num_proc,
     )
 
-    tinystories_datapath = os.path.join(
+    alpaca_datapath = os.path.join(
         os.path.dirname(os.path.dirname(__file__)),
-        "tinystories"
+        "alpaca"
     )
 
-    if not os.path.exists(tinystories_datapath):
-        os.makedirs(tinystories_datapath)
+    if not os.path.exists(alpaca_datapath):
+        os.makedirs(alpaca_datapath)
 
     # concatenate all the ids in each dataset into one large file we can use for training
     for split, dset in tokenized.items():
         arr_len = np.sum(dset['len'], dtype=np.uint64)
-        filename = os.path.join(tinystories_datapath, f'{split}.bin')
+        filename = os.path.join(alpaca_datapath, f'{split}.bin')
         dtype = np.uint16 # (can do since enc.max_token_value == 50256 is < 2**16)
         arr = np.memmap(filename, dtype=dtype, mode='w+', shape=(arr_len,))
         total_batches = 1024

@@ -147,11 +147,7 @@ class NASBench201SearchSpace(SearchNetworkBase):
         self.global_pooling = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Linear(C_prev, num_classes)
         if load_api:
-<<<<<<< HEAD
-            self.api = API("/path/to/bench")
-=======
             self.api = API("/path/to/NAS-Bench-201-v1_0-e61699.pth")
->>>>>>> 9f4b5b84d7f3547c835ba81757ef4e286ab2ac3e
         self._initialize_alphas()
         self._initialize_anchors()
         
@@ -159,7 +155,7 @@ class NASBench201SearchSpace(SearchNetworkBase):
         self.anchor = Dirichlet(torch.ones_like(self._arch_parameters[0]).to(DEVICE))
 
     def _initialize_alphas(self):
-        self.arch_parameter = nn.Parameter(
+        self.arch_parameter = nn.Parameter  (
             1e-3 * torch.randn(self.num_edge, len(self.search_space))
         ) 
         self._arch_parameters = [self.arch_parameter]

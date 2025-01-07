@@ -14,6 +14,7 @@ from mamba_ssm.modules.mha import _update_kv_cache
 
 from einops import rearrange
 
+import inspect
 import torch.nn.functional as F
 try:
     from flash_attn.layers.rotary import RotaryEmbedding
@@ -50,7 +51,7 @@ class HybridMamba2Config(PretrainedConfig):
         eos_token_id=2,
         expand=2,
         conv_kernel=4,
-        n_groups=8,
+        n_groups=1,
         use_bias=False,
         use_conv_bias=True,
         hidden_act="silu",
@@ -65,9 +66,10 @@ class HybridMamba2Config(PretrainedConfig):
         use_cache=True,
         rms_norm=True,
         chunk_size=256,
-        tie_word_embeddings=False,
+        tie_word_embeddings=True,
         attn_layer_idxs=[],
         attn_params={},
+        max_seqlen=2048,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -102,7 +104,8 @@ class HybridMamba2Config(PretrainedConfig):
         self.tie_word_embeddings = tie_word_embeddings
         self.attn_layer_idxs = attn_layer_idxs
         self.attn_params = attn_params
-
+        self.max_seqlen = max_seqlen
+        
         super().__init__(
             bos_token_id=bos_token_id,
             eos_token_id=eos_token_id,
@@ -517,7 +520,6 @@ class Mamba2AttentionModel(Mamba2PreTrainedModel):
         )
         use_cache = use_cache if use_cache is not None else (self.config.use_cache if not self.training else False)
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
         if (input_ids is None) ^ (inputs_embeds is not None):  # ^ is python for xor
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
@@ -631,6 +633,32 @@ class HybridMamba2ForCausalLM(Mamba2PreTrainedModel, GenerationMixin):
     def set_input_embeddings(self, new_embeddings):
         return self.backbone.set_input_embeddings(new_embeddings)
 
+    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
+        # start with all of the candidate parameters
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        # filter out those that do not require grad
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {'params': decay_params, 'weight_decay': weight_decay},
+            {'params': nodecay_params, 'weight_decay': 0.0}
+        ]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+        # Create AdamW optimizer and use the fused version if it is available
+        fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+        use_fused = fused_available and device_type == 'cuda'
+        extra_args = dict(fused=True) if use_fused else dict()
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
+        print(f"using fused AdamW: {use_fused}")
+
+        return optimizer
+
     def prepare_inputs_for_generation(
         self,
         input_ids,
@@ -718,7 +746,7 @@ class HybridMamba2ForCausalLM(Mamba2PreTrainedModel, GenerationMixin):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         mamba2_outputs = self.backbone(
-            input_ids,
+            input_ids=input_ids,
             cache_params=cache_params,
             inputs_embeds=inputs_embeds,
             output_hidden_states=output_hidden_states,
@@ -746,9 +774,41 @@ class HybridMamba2ForCausalLM(Mamba2PreTrainedModel, GenerationMixin):
             output = (logits,) + mamba2_outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
-        return HybridMamba2CausalLMOutput(
-            loss=loss,
-            logits=logits,
-            cache_params=mamba2_outputs.cache_params,
-            hidden_states=mamba2_outputs.hidden_states,
-        )
+        return logits, loss
+        
+        # HybridMamba2CausalLMOutput(
+        #     loss=loss,
+        #     logits=logits,
+        #     cache_params=mamba2_outputs.cache_params,
+        #     hidden_states=mamba2_outputs.hidden_states,
+        # )
+
+    
+    def estimate_mfu(self, fwdbwd_per_iter, dt): 
+        """ estimate model flops utilization (MFU) in units of A100 bfloat16 peak FLOPS """
+        # first estimate the number of flops we do per iteration.
+        # see PaLM paper Appendix B as ref: https://arxiv.org/abs/2204.02311
+        ####### TODO: DOUBLE CHECK FOR MAMBA #####
+        N = self.get_num_params()
+        cfg = self.config
+        L, H, Q, T = cfg.num_hidden_layers, 24, cfg.head_dim//24, cfg.chunk_size
+        flops_per_token = 6*N + 24*L*H*Q*T
+        flops_per_fwdbwd = flops_per_token * T
+        flops_per_iter = flops_per_fwdbwd * fwdbwd_per_iter
+        # express our flops throughput as ratio of A100 bfloat16 peak flops
+        flops_achieved = flops_per_iter * (1.0/dt) # per second
+        flops_promised = 15.62e12 # 312e12 # A100 GPU bfloat16 peak flops is 312 TFLOPS
+        mfu = flops_achieved / flops_promised
+        return mfu
+
+    def get_num_params(self, non_embedding=True):
+        """
+        Return the number of parameters in the model.
+        For non-embedding count (default), the position embeddings get subtracted.
+        The token embeddings would too, except due to the parameter sharing these
+        params are actually used as weights in the final layer, so we include them.
+        """
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.backbone.embeddings.weight.numel()
+        return n_params

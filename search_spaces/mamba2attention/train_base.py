@@ -27,7 +27,7 @@ import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
-from model_base import HybridMamba2Config, HybridMamba2
+from model_base import HybridMamba2Config, HybridMamba2ForCausalLM
 import argparse
 
 from search_spaces.NB201.utils.config import load_config
@@ -47,7 +47,7 @@ parser.add_argument(
     help="Path to load the architecture config from. Use this argument to train a custom model. Either this argument or arch_traj_load_path argument must be specified, but not both.",
 )
 parser.add_argument(
-    "--data_dir", type=str, default="search_spaces/nanoGPT/data/"
+    "--data_dir", type=str, default="search_spaces/mamba2attention/data/tinystories"
 )
 parser.add_argument(
     "--early_stopping", action="store_true", help="Enable early stopping."
@@ -98,7 +98,6 @@ else:
     config = load_config(args.arch_config_file, None, None)._asdict()
 
 print(config)
-
 config_string = ""
 for k, v in config.items():
     k_ = "".join(map(lambda s: s[0], k.split("_")))
@@ -106,10 +105,17 @@ for k, v in config.items():
     config_string += f"{k_}{v_}_"
 config_string = config_string[:-1]
 
-n_layer = config["num_layers"]
-n_embd = config["embed_dim"]
-n_heads = config["num_heads"]
-mlp_ratio = config["mlp_ratio"]
+
+num_hidden_layers = config["num_hidden_layers"]
+head_dim = config["head_dim"]
+num_heads = config["num_heads"]
+hidden_size = config["hidden_size"]
+attn_layer_idxs = config["attn_layer_idxs"]
+attn_params = {
+    "embed_dim": config["attn_embed_dim"],
+    "num_heads": config["attn_num_heads"],
+    "casual": True
+}
 # get time string
 timestr = time.strftime("%Y%m%d-%H%M%S")
 out_dir = f"output_tinystories/out_train_{search_optimizer}_{search_train_portion}_{config_string}_maxiter{args.max_iters}_{args.seed}_{timestr}"
@@ -118,17 +124,17 @@ log_interval = 1
 eval_iters = 10
 eval_only = False  # if True, script exits right after the first eval
 always_save_checkpoint = True  # if True, always save a checkpoint after each eval
-init_from = "scratch"  # 'scratch' or 'resume' or 'gpt2*'
+init_from = "scratch"  # 'scratch' or 'resume' 
 
 # wandb logging
-wandb_log = False  # disabled by default
-wandb_project = "owt"
-wandb_run_name = "gpt2"  # 'run' + str(time.time())
+wandb_log = True  # disabled by default
+wandb_project = "mamba2attention"
+wandb_run_name = "mamba2attention"  # 'run' + str(time.time())
 
 # data
 gradient_accumulation_steps = 5 * 8  # used to simulate larger batch sizes
 batch_size = 16  # if gradient_accumulation_steps > 1, this is the micro-batch size
-block_size = 1024
+chunk_size = 256
 
 # model
 dropout = 0.0  # for pretraining 0 is good, for finetuning try 0.1+
@@ -165,7 +171,7 @@ config_keys = [
     if not k.startswith("_") and isinstance(v, (int, float, bool, str))
 ]
 exec(
-    open("search_spaces/nanoGPT/configurator.py").read()
+    open("search_spaces/mamba2attention/configurator.py").read()
 )  # overrides from command line or config file
 config = {k: globals()[k] for k in config_keys}  # will be useful for logging
 # -----------------------------------------------------------------------------
@@ -189,7 +195,7 @@ else:
     seed_offset = 0
     ddp_world_size = 1
 
-tokens_per_iter = gradient_accumulation_steps * ddp_world_size * batch_size * block_size
+tokens_per_iter = gradient_accumulation_steps * ddp_world_size * batch_size * chunk_size
 print(f"tokens per iteration will be: {tokens_per_iter:,}")
 
 if master_process:
@@ -238,13 +244,13 @@ def get_batch(split):
     else:
         raise ValueError(f"split{split} not recognized")
 
-    ix = torch.randint(len(data) - block_size, (batch_size,))
+    ix = torch.randint(len(data) - chunk_size, (batch_size,))
     x = torch.stack(
-        [torch.from_numpy((data[i : i + block_size]).astype(np.int64)) for i in ix]
+        [torch.from_numpy((data[i : i + chunk_size]).astype(np.int64)) for i in ix]
     )
     y = torch.stack(
         [
-            torch.from_numpy((data[i + 1 : i + 1 + block_size]).astype(np.int64))
+            torch.from_numpy((data[i + 1 : i + 1 + chunk_size]).astype(np.int64))
             for i in ix
         ]
     )
@@ -273,14 +279,17 @@ if os.path.exists(meta_path):
 
 # model init
 model_args = dict(
-    n_layer=n_layer,
-    n_head=n_heads,
-    n_embd=n_embd,
-    block_size=block_size,
+    num_hidden_layers=num_hidden_layers,
+    num_heads=num_heads,
+    head_dim=head_dim,
+    hidden_size=hidden_size,
+    attn_layer_idxs=attn_layer_idxs,
+    chunk_size=chunk_size,
     bias=bias,
     vocab_size=None,
     dropout=dropout,
-    mlp_ratio=mlp_ratio,
+    state_size=128,
+    n_groups=1,
 )  # start with model_args from command line
 
 if init_from == "scratch":
@@ -289,11 +298,11 @@ if init_from == "scratch":
     # determine the vocab size we'll use for from-scratch training
     if meta_vocab_size is None:
         print(
-            "defaulting to vocab_size of GPT-2 to 50304 (50257 rounded up for efficiency)"
+            "defaulting to vocab_size of Mamba2Attention to 50304 (50257 rounded up for efficiency)"
         )
     model_args["vocab_size"] = meta_vocab_size if meta_vocab_size is not None else 50304
-    gptconf = GPTConfig(**model_args)
-    model = GPT(gptconf)
+    model_conf = HybridMamba2Config(**model_args)
+    model = HybridMamba2ForCausalLM(model_conf)
 elif init_from == "resume":
     print(f"Resuming training from {out_dir}")
     # resume training from a checkpoint.
@@ -302,14 +311,14 @@ elif init_from == "resume":
     checkpoint_model_args = checkpoint["model_args"]
     # force these config attributes to be equal otherwise we can't even: training
     # the rest of the attributes (e.g. dropout) can stay as desired from command line
-    """for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
+    """for k in ['num_hidden_layers', 'num_heads', 'head_dim', 'chunk_size', 'bias', 'vocab_size', 'hidden_size', 'attn_layer_idxs']:
         model_args[k] = checkpoint_model_args[k]
     model_args['bias'] = False"""  # override bias from command line
     # create the model
     model_args["vocab_size"] = meta_vocab_size if meta_vocab_size is not None else 50304
     print(f"model_args: {model_args}")
-    gptconf = GPTConfig(**model_args)
-    model = GPT(gptconf)
+    model_conf = HybridMamba2Config(**model_args)
+    model = HybridMamba2ForCausalLM(model_conf)
     state_dict = checkpoint["model"]
     # fix the keys of the state dictionary :(
     # honestly no idea how checkpoints sometimes get this prefix, have to debug more
@@ -322,21 +331,9 @@ elif init_from == "resume":
     model.load_state_dict(state_dict)
     iter_num = checkpoint["iter_num"]
     best_val_loss = checkpoint["best_val_loss"]
-elif init_from.startswith("gpt2"):
-    print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
-    # initialize from OpenAI GPT-2 weights
-    override_args = dict(dropout=dropout)
-    model = GPT.from_pretrained(init_from, override_args)
-    # read off the created config params, so we can store them into checkpoint correctly
-    for k in ["n_layer", "n_head", "n_embd", "block_size", "bias", "vocab_size"]:
-        model_args[k] = getattr(model.config, k)
+elif init_from.startswith("mamba2attention"):
+    raise 'Not implemented yet!'
 
-# crop down the model block size if desired, using model surgery
-if block_size < model.config.block_size:
-    model.crop_block_size(block_size)
-    model_args[
-        "block_size"
-    ] = block_size  # so that the checkpoint will have the right value
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
@@ -371,7 +368,7 @@ def estimate_loss(splits):
         for k in range(eval_iters):
             X, Y = get_batch(split)
             with ctx:
-                logits, loss = model(X, Y)
+                logits, loss = model(input_ids=X, labels=Y)
             losses[k] = loss.item()
         out[split] = losses.mean()
     model.train()
@@ -399,8 +396,8 @@ def get_lr(it):
 if wandb_log and master_process:
     import wandb
 
-    wandb_run_name = f"TinyStories_trainmodel_{search_optimizer}_{search_train_portion}_{config_string}_{args.max_iters}_{args.seed}"
-    wandb.init(project=wandb_project, name=wandb_run_name, entity='your-team', config=config)
+    wandb_run_name = f"Mamba2Attention_TinyStories_trainmodel_{search_optimizer}_{search_train_portion}_{config_string}_{args.max_iters}_{args.seed}"
+    wandb.init(project=wandb_project, name=wandb_run_name, entity='hlocla9-uit-norges-arktiske-universitet', config=config)
 
 # training loop
 X, Y = get_batch("train")  # fetch the very first batch
@@ -478,7 +475,7 @@ while True:
                 micro_step == gradient_accumulation_steps - 1
             )
         with ctx:
-            logits, loss = model(X, Y)
+            logits, loss = model(input_ids=X, labels=Y)
             loss = (
                 loss / gradient_accumulation_steps
             )  # scale the loss to account for gradient accumulation
