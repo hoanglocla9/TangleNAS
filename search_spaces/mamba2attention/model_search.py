@@ -34,7 +34,7 @@ except ImportError:
 
 from optimizers.mixop.entangle import EntangledOp
 from dataclasses import dataclass
-from mixed_operations.mixed_conv1d import MixedConv1dV2
+from mixed_operations.mixed_conv1d import MixedConv1dV2, MixedConv1dV2_MHA
 from mixed_operations.mixed_rms_norm import MixedRMSNormGatedV2
 from mixed_operations.mixed_linear_mamba2 import MixedLinearV2_InProj, MixedLinearV2_OutProj, MixedLinearV2_InProj_MHA, MixedLinearV2_OutProj_MHA
 from mixed_operations.mixed_embedding import MixedEmbeddingV2
@@ -64,14 +64,13 @@ def apply_mask_to_padding_states(hidden_states, attention_mask):
 
 class EntangleHybridMamba2Config(PretrainedConfig):
     model_type = "mamba2"
-
     def __init__(
         self,
         num_heads_list:list = [16, 24, 32],
         vocab_size:int = 50304,
         hidden_size_list:list = [384, 768, 1024],
         state_size:int = 128,
-        num_hidden_layers_list:list = [8,9,10],
+        num_hidden_layers_list:list = [8, 9, 10],
         layer_norm_epsilon=1e-5,
         pad_token_id=1,
         bos_token_id=0,
@@ -84,7 +83,6 @@ class EntangleHybridMamba2Config(PretrainedConfig):
         hidden_act="silu",
         initializer_range=0.1,
         residual_in_fp32=True,
-        # time_step_rank="auto",
         time_step_min=0.001,
         time_step_max=0.1,
         time_step_floor=1e-4,
@@ -133,8 +131,6 @@ class EntangleHybridMamba2Config(PretrainedConfig):
         self.time_step_limit = time_step_limit
         self.tie_word_embeddings = tie_word_embeddings
         self.attn_layer_idxs = attn_layer_idxs
-        self.attn_embed_dim_list = attn_embed_dim_list
-        self.attn_num_heads_list = attn_num_heads_list
         self.max_seqlen = max_seqlen
         
         super().__init__(
@@ -181,8 +177,16 @@ class HybridMamba2Cache:
                 device=device,
                 dtype=dtype,
             )
-            for i in range(max(config.num_hidden_layers_list)) 
+            for i in range(max(config.num_hidden_layers_list)) if i not in config.attn_layer_idxs
         }
+        for i in config.attn_layer_idxs:
+            self.conv_states[i] = torch.zeros(
+                batch_size,
+                max(config.hidden_size_list)//min(config.num_heads_list) * 3 * max(config.num_heads_list),
+                self.conv_kernel_size,
+                device=device,
+                dtype=dtype,
+            )
         self.ssm_states = {
             i: torch.zeros(
                 batch_size, max(config.num_heads_list), int(max(config.hidden_size_list) * config.expand)//min(config.num_heads_list), config.state_size, device=device, dtype=dtype
@@ -279,7 +283,7 @@ class MHA(nn.Module):
         super().__init__()
         # self.embed_dim = embed_dim
         self.mixop = mixop
-        self.embed_dim_list = config.attn_embed_dim_list
+        self.embed_dim_list = config.hidden_size_list
         self.layer_idx = layer_idx
         self.d_conv = d_conv
         self.rotary_emb_dim = rotary_emb_dim
@@ -287,7 +291,7 @@ class MHA(nn.Module):
         self.causal = causal
 
         # self.num_heads = num_heads
-        self.num_heads_list = config.attn_num_heads_list
+        self.num_heads_list = config.num_heads_list
         self.num_heads_kv_list = self.num_heads_list
         # self.num_heads_kv =  num_heads_kv if num_heads_kv is not None else num_heads
         
@@ -299,7 +303,6 @@ class MHA(nn.Module):
         self.mlp_dim = math.ceil(mlp_dim / 256) * 256
         max_qkv_dim = self.max_head_dim * 3 * (max(self.num_heads_list)) #  + 2 * self.num_heads_kv
         max_out_dim = self.max_head_dim * max(self.num_heads_list)
-
         if self.rotary_emb_dim > 0:
             assert RotaryEmbedding is not None, "rotary requires flash_attn to be installed"
             self.rotary_emb = RotaryEmbedding(
@@ -314,25 +317,24 @@ class MHA(nn.Module):
         self.in_proj_mix_op_list = get_entangle_ops_combi(self.in_proj_mix_op, self.embed_dim_list, self.num_heads_list, "in_proj_mha")
 
         if self.d_conv > 0:
-            raise 'Not support d_conv>0 yet!'
-            # conv1d = nn.Conv1d(
-            #     max_qkv_dim, max_qkv_dim, kernel_size=self.d_conv, padding=self.d_conv - 1, groups=max_qkv_dim,
-            #     **factory_kwargs
-            # )
-            # self.conv1d_mix_op = MixedConv1dV2(conv1d_dim_list, conv1d)
-            # self.conv1d_mix_op_list = get_entangle_ops(self.conv1d_mix_op, conv1d_dim_list, "conv1d_mamba2")
+            self.conv1d = nn.Conv1d(
+                max_qkv_dim, max_qkv_dim, kernel_size=self.d_conv, padding=self.d_conv - 1, groups=max_qkv_dim,
+                # **factory_kwargs
+            )
+            self.conv1d_mix_op = MixedConv1dV2_MHA(self.embed_dim_list, self.num_heads_list, self.conv1d)
+            self.conv1d_mix_op_list = get_entangle_ops_combi(self.conv1d_mix_op, self.embed_dim_list, self.num_heads_list, "conv1d_mha")
         
         
-        self.out_proj = nn.Linear(max_out_dim + self.mlp_dim // 2, max(self.embed_dim_list), bias=out_proj_bias)  # , **factory_kwargs
-        self.out_proj_mix_op = MixedLinearV2_OutProj_MHA(self.embed_dim_list, self.num_heads_list, mlp_dim=mlp_dim, linear_layer=in_proj)
+        out_proj = nn.Linear(max_out_dim + self.mlp_dim // 2, max(self.embed_dim_list), bias=out_proj_bias)  # , **factory_kwargs
+        self.out_proj_mix_op = MixedLinearV2_OutProj_MHA(self.embed_dim_list, self.num_heads_list, mlp_dim=mlp_dim, linear_layer=out_proj)
         self.out_proj_mix_op_list = get_entangle_ops_combi(self.out_proj_mix_op, self.embed_dim_list, self.num_heads_list, "out_proj_mha")
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None):
-        dtype = self.out_proj.weight.dtype if dtype is None else dtype
-        device = self.out_proj.weight.device
+        dtype = self.conv1d.weight.dtype if dtype is None else dtype
+        device = self.conv1d.weight.device
         if self.d_conv > 0:
             conv_state = torch.zeros(
-                batch_size, self.conv1d.weight.shape[0], self.d_conv, device=device, dtype=dtype
+                batch_size, self.max_head_dim * 3 * (max(self.num_heads_list)), self.d_conv, device=device, dtype=dtype # self.conv1d.weight.shape[0]
             )
         else:
             conv_state = None
@@ -427,6 +429,32 @@ class MHA(nn.Module):
                 causal=self.causal,
             )
 
+    def get_mixed_conv1d_weights(self, embeded_dim_weights, num_heads_weights):
+        weights_mix = 0
+        bias_mix = 0
+        max_n_channels = max(self.embed_dim_list)//min(self.num_heads_list) * 3 * (max(self.num_heads_list))
+        for i in range(len(self.embed_dim_list)):
+            for j in range(len(self.num_heads_list)):
+                n_channels = self.embed_dim_list[i] // self.num_heads_list[j] * 3 * self.num_heads_list[j]
+                weight = self.conv1d.weight[:n_channels,:,:]
+                if self.conv1d.bias is None:
+                    bias = None
+                else:
+                    bias = self.conv1d.bias[:n_channels]
+                    # pad weights and bias
+                weight = torch.nn.functional.pad(weight, (0, 0, 0, 0, 0, max_n_channels - weight.size(0)), "constant", 0)
+                if bias is None:
+                    bias = None
+                else:
+                    bias = torch.nn.functional.pad(bias, (0, max_n_channels - bias.shape[0]), "constant", 0)
+                weights_mix += embeded_dim_weights[i] * num_heads_weights[j] *   weight
+                if bias is not None:
+                    bias_mix += embeded_dim_weights[i] * num_heads_weights[j] * bias
+                else:
+                    bias_mix = None
+
+        return weights_mix, bias_mix
+
     def forward(self, x, 
                 cache_params:HybridMamba2Cache=None, cache_position: Optional[torch.LongTensor] = None, 
                 attention_mask: Optional[torch.Tensor] = None,
@@ -463,44 +491,47 @@ class MHA(nn.Module):
             x_mlp_up, x_mlp_gate = x_mlp.chunk(2, dim=-1)
             x_mlp = x_mlp_up * F.silu(x_mlp_gate)
 
-        # if self.d_conv > 0:
-        #     # The inference code for conv1d is pretty messy, should clean it up
-        #     if (cache_params is None or cache_params.seqlen_offset == 0):
-        #         if causal_conv1d_fn is None:
-        #             qkv = rearrange(
-        #                 self.conv1d(rearrange(qkv, "b s d -> b d s"))[..., :-(self.d_conv - 1)], "b d s -> b s d"
-        #             ).contiguous()
-        #         else:
-        #             qkv = causal_conv1d_fn(
-        #                 qkv.transpose(1, 2),
-        #                 rearrange(self.conv1d.weight, "d 1 w -> d w"),
-        #                 self.conv1d.bias
-        #             ).transpose(1, 2)
-        #         if cache_params is not None:
-        #             _, conv_state = cache_params.conv_states[self.layer_idx]
-        #             # If we just take qkv[:, :, -self.d_conv :], it will error if seqlen < self.d_conv
-        #             # Instead F.pad will pad with zeros if seqlen < self.d_conv, and truncate otherwise.
-        #             qkv_t = rearrange(qkv, "b l d -> b d l")
-        #             conv_state.copy_(F.pad(qkv_t, (self.d_conv - qkv_t.shape[-1], 0)))  # Update state (B D W)
-        #     else:
-        #         _, conv_state = cache_params.conv_states[self.layer_idx]
-        #         assert qkv.shape[1] == 1, "Only support decoding with 1 token at a time for now"
-        #         qkv = qkv.squeeze(1)
-        #         # Conv step
-        #         if causal_conv1d_update is None:
-        #             conv_state.copy_(torch.roll(conv_state, shifts=-1, dims=-1))  # Update state (B D W)
-        #             conv_state[:, :, -1] = qkv
-        #             qkv = torch.sum(conv_state * rearrange(self.conv1d.weight, "d 1 w -> d w"), dim=-1)  # (B D)
-        #             if self.conv1d.bias is not None:
-        #                 qkv = qkv + self.conv1d.bias
-        #         else:
-        #             qkv = causal_conv1d_update(
-        #                 qkv,
-        #                 conv_state,
-        #                 rearrange(self.conv1d.weight, "d 1 w -> d w"),
-        #                 self.conv1d.bias
-        #             )
-        #         qkv = qkv.unsqueeze(1)
+        if self.d_conv > 0:
+            # The inference code for conv1d is pretty messy, should clean it up
+            conv1d_mix, bias_mix = self.get_mixed_conv1d_weights(arch_params["hidden_size"], arch_params["num_heads"][self.layer_idx])
+            if (cache_params is None or cache_params.seqlen_offset == 0):
+                # if causal_conv1d_fn is None:
+                qkv = rearrange(
+                    self.mixop.forward(rearrange(qkv, "b s d -> b d s"), [arch_params["hidden_size"], arch_params["num_heads"][self.layer_idx]], 
+                        self.conv1d_mix_op_list, combi=True)[..., :-(self.d_conv - 1)]   , "b d s -> b s d"
+                ).contiguous() # conv1d(rearrange(qkv, "b s d -> b d s"))
+                # else:
+                # qkv = causal_conv1d_fn(
+                #     qkv.transpose(1, 2),
+                #     rearrange(conv1d_mix, "d 1 w -> d w"),
+                #     bias_mix
+                # ).transpose(1, 2)
+                if cache_params is not None:
+                    conv_state = cache_params.conv_states[self.layer_idx]
+                    # If we just take qkv[:, :, -self.d_conv :], it will error if seqlen < self.d_conv
+                    # Instead F.pad will pad with zeros if seqlen < self.d_conv, and truncate otherwise.
+                    qkv_t = rearrange(qkv, "b l d -> b d l")
+                    conv_state.copy_(F.pad(qkv_t, (self.d_conv - qkv_t.shape[-1], 0)))  # Update state (B D W)
+            else:
+                conv_state = cache_params.conv_states[self.layer_idx]
+                assert qkv.shape[1] == 1, "Only support decoding with 1 token at a time for now"
+                qkv = qkv.squeeze(1)
+                # Conv step
+                # if causal_conv1d_update is None:
+                conv_state.copy_(torch.roll(conv_state, shifts=-1, dims=-1))  # Update state (B D W)
+                conv_state[:, :, -1] = qkv
+                qkv = torch.sum(conv_state * rearrange(conv1d_mix, "d 1 w -> d w"), dim=-1)  # (B D)
+
+                if bias_mix is not None:
+                    qkv = qkv + bias_mix
+                # else:
+                #     qkv = causal_conv1d_update(
+                #         qkv,
+                #         conv_state,
+                #         rearrange(self.conv1d.weight, "d 1 w -> d w"),
+                #         self.conv1d.bias
+                #     )
+                qkv = qkv.unsqueeze(1)
 
         q, kv = qkv.split([max(self.num_heads_list) * self.max_head_dim, max(self.num_heads_kv_list) * 2 * self.max_head_dim], dim=-1)
         q = rearrange(q, "... (h d) -> ... h d", d=self.max_head_dim)
@@ -902,7 +933,6 @@ class Mamba2Block(nn.Module):
 class Mamba2AttentionModel(Mamba2PreTrainedModel):
     def __init__(self, config, mixop,  max_n_layers, hidden_size_list, max_hidden_size):
         super().__init__(config)
-
         self.embeddings = nn.Embedding(config.vocab_size, max_hidden_size).to(config.device)
         self.embedding_table_op =  MixedEmbeddingV2(hidden_size_list, max_embed_dim=max_hidden_size, embedding=self.embeddings)
         self.embedding_table_list = get_entangle_ops(self.embedding_table_op, hidden_size_list, "embedding_table")
@@ -910,7 +940,7 @@ class Mamba2AttentionModel(Mamba2PreTrainedModel):
         for idx in range(max_n_layers):
             ####### TODO: Fix for hybrid models, Currently the model only consists of Mamba blocks
             if idx in config.attn_layer_idxs:
-                tmp_layers.append(MHA(config, mixop=mixop, layer_idx=idx)) # d_conv=config.conv_kernel, 
+                tmp_layers.append(MHA(config, d_conv=config.conv_kernel,  causal=True, mixop=mixop, layer_idx=idx)) # 
             else:
                 tmp_layers.append(Mamba2Block(config, mixop, layer_idx=idx))
         self.layers = nn.ModuleList(tmp_layers) # [Mamba2Block(config, layer_idx=idx) for idx in range(config.num_hidden_layers)]
@@ -1056,12 +1086,6 @@ class HybridMamba2ForCausalLM(Mamba2PreTrainedModel, GenerationMixin):
         self.hidden_size_list = config.hidden_size_list
         self.max_hidden_size = max(self.hidden_size_list)
         
-        # self.attn_num_heads_list = config["attn_num_heads"]
-        # self.max_attn_num_heads = max(self.attn_num_heads_list)
-
-        # self.attn_embed_dim_list = config["attn_embed_dim"]
-        # self.max_attn_embed_dim = max(self.attn_embed_dim_list)
-
         self.mixop = get_mixop(config.mixop, use_we_v2=True) # use_we_v2=True
         self.sampler = get_sampler(config.mixop)
 

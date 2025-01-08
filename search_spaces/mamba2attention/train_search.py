@@ -84,7 +84,7 @@ def compute_attn_layer_idx(num_hidden_layers, attn_ratio):
     return results
 # Model
 attn_ratio =  0.1 # 0.1#
-num_hidden_layers = [16, 17, 18]
+num_hidden_layers = [8, 9, 10]
 num_heads = [16, 24, 32]
 head_dim = [64, 128]
 hidden_size = [384, 768, 1024]  # for gpt2, 768 is the largest
