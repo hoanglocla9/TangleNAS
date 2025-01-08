@@ -9,9 +9,9 @@ class EntangledOp(nn.Module):
         self.op = op
         self.name = name
 
-    def forward(self, x, weights, use_argmax=False):
+    def forward(self, x, weights, use_argmax=False, **extra_params):
         #print(self.op)
-        return self.op(x, weights, use_argmax=use_argmax)
+        return self.op(x, weights, use_argmax=use_argmax, **extra_params)
 
     def wider(self, C1, C2):
         if self.op!=None:
@@ -19,7 +19,7 @@ class EntangledOp(nn.Module):
 
 class EntangleMixOp(MixOp):
 
-    def forward(self, x, weights, ops, add_params=False, combi=False):
+    def forward(self, x, weights, ops, combi=False, **extra_params):
         """ Forward pass through the MixedOp
 
         add_params and combi are ignored and do not have any effect
@@ -43,6 +43,7 @@ class EntangleMixOp(MixOp):
 
                 if (op.name not in entangled_ops) or (entangled_ops[op.name] is None):
                     entangled_ops[op.name] = op if op.op is not None else None
+                
                 i = i+1
                 continue
             #print(op)
@@ -50,7 +51,7 @@ class EntangleMixOp(MixOp):
         for op_name in entangled_op_weights.keys():
             w = entangled_op_weights[op_name]
             op = entangled_ops[op_name]
-            out = out + op(x, w)
+            out = out + op(x, w, **extra_params)
         return out
 
     def forward_progressive(self,

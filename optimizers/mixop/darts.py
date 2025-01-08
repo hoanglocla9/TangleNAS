@@ -174,7 +174,7 @@ class DARTSMixOpV2(EntangleMixOp):
         return out
 
     def forward_depth(self, x_list, weights, params_list=[], add_params=False):
-        out = 0
+        out = 0 
         weights = self.preprocess_weights(weights)
         for w, x in zip(weights, x_list):
             out = out + w * x 
