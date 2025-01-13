@@ -357,7 +357,6 @@ t0 = time.time()
 local_iter_num = 0  # number of iterations in the lifetime of this process
 
 running_mfu = -1.0
-
 while True:
     # determine and set the learning rate for this iteration
     lr = get_lr(iter_num) if decay_lr else learning_rate
@@ -420,6 +419,8 @@ while True:
             )
         with ctx:
             arch_logits, arch_loss = model(X_arch, labels=Y_arch)
+            print(model.get_arch_parameters())
+            model.get_arch_one_hot()
             arch_loss = (
                 arch_loss / gradient_accumulation_steps
             )  # scale the loss to account for gradient accumulation

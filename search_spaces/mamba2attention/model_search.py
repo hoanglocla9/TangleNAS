@@ -1290,8 +1290,23 @@ class HybridMamba2ForCausalLM(Mamba2PreTrainedModel, GenerationMixin):
         n_params = sum(p.numel() for p in self.parameters())
         if non_embedding:
             n_params -= self.backbone.embeddings.weight.numel()
+
         return n_params
-    
+
+    def get_arch_one_hot(self):
+        arch_params = self.sampler.sample_step(self.get_arch_parameters())
+        print(self.assign_arch_parameters(arch_params))
+        layer_param, head_param, mlp_ratio_param, embed_dim_param, bias_param = arch_params
+        # layer_selected = torch.argmax(layer_param, dim=-1)
+        # layer_num = self.choices['n_layer_choices'][layer_selected]
+        # mlp_ratio_new = torch.zeros_like(mlp_ratio_param)
+        # num_heads_new = torch.zeros_like(head_param)
+        # for i in range(layer_num):
+        #     mlp_ratio_new[i] = mlp_ratio_param[i]
+        #     num_heads_new[i] = head_param[i]
+        # one_hot = torch.cat([embed_dim_param, layer_param, mlp_ratio_new.view(-1), num_heads_new.view(-1), bias_param])
+        # return one_hot
+
     def _init_arch_parameters(self):
         self.arch_parameter_dict = {}
         self.arch_num_hidden_layers = nn.Parameter(
