@@ -63,7 +63,7 @@ wandb_log = False  # disabled by default
 wandb_project = "mamba2attention_tinystories_we"
 
 # Data
-gradient_accumulation_steps = 5 * 6  # used to simulate larger batch sizes
+gradient_accumulation_steps = 8 * 6  # used to simulate larger batch sizes
 batch_size = 4  # if gradient_accumulation_steps > 1, this is the micro-batch size
 block_size = 256
 
@@ -83,15 +83,15 @@ def compute_attn_layer_idx(num_hidden_layers, attn_ratio):
             x -= 1
     return results
 # Model
-attn_ratio =  0.1 # 0.1#
-num_hidden_layers = [8, 9, 10]
-num_heads = [16, 24, 32]
-head_dim = [64, 128]
-hidden_size = [384, 768, 1024]  # for gpt2, 768 is the largest
+attn_ratio =  0.0 # 0.1#
+num_hidden_layers = [12] # 10, 11, 
+num_heads = [ 32] # 16, 24,
+num_heads_kv = [] # 2, 4, 
+head_dim = [128] # 64, 
+hidden_size = [1024]  # for gpt2, 768 is the largest # 384, 768, 
 # attn_num_heads = [16, 24, 32]
 # attn_embed_dim = [384, 768, 1152]
 attn_layer_idxs = compute_attn_layer_idx(num_hidden_layers, attn_ratio)
-print("attn_layer_idxs", attn_layer_idxs)
 chunk_size = 256
 
 dropout = 0.0  # for pretraining 0 is good, for finetuning try 0.1+
@@ -106,7 +106,7 @@ grad_clip = 1.0  # clip gradients at this value, or disable if == 0.0
 
 # learning rate decay settings
 decay_lr = True  # whether to decay the learning rate
-warmup_iters = 2000  # how many steps to warm up for
+warmup_iters = 200 # 200  # how many steps to warm up for
 min_lr = 6e-5  # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 
 # DDP settings
@@ -252,6 +252,7 @@ model_args = dict(
     n_groups=1,
     mixop=optimizer,
     batch_size=batch_size,
+    num_heads_kv_list=num_heads_kv,
     device='cuda'
 )  # start with model_args from command line
 
@@ -266,7 +267,6 @@ if init_from == "scratch":
     model_args["vocab_size"] = meta_vocab_size if meta_vocab_size is not None else 50304
     model_conf = EntangleHybridMamba2Config(**model_args)
     model = HybridMamba2ForCausalLM(model_conf)
-    print(model)
 elif init_from == "resume":
     raise NotImplementedError("init_from='resume' not yet implemented")
 elif init_from.startswith("mamba2attention"):
@@ -486,9 +486,10 @@ while True:
             f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%"
         )
         for k in unwrapped_model.arch_parameter_dict.keys():
-            print(
-                f"arch parameter {k}: {torch.nn.functional.softmax(unwrapped_model.arch_parameter_dict[k], dim=-1)}"
-            )
+            if unwrapped_model.arch_parameter_dict[k] is not None:
+                print(
+                    f"arch parameter {k}: {torch.nn.functional.softmax(unwrapped_model.arch_parameter_dict[k], dim=-1)}"
+                )
 
         print(f"Best config: {unwrapped_model.get_best_config()}")
 

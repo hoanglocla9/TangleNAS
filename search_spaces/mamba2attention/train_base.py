@@ -55,7 +55,7 @@ parser.add_argument(
 parser.add_argument(
     "--val_portion",
     type=float,
-    default=0.,
+    default=0.3,
     help="Portion of the train data to use as validation. Used only when --early_stopping flag is used.",
 )
 parser.add_argument(
@@ -97,7 +97,6 @@ else:
 
     config = load_config(args.arch_config_file, None, None)._asdict()
 
-print(config)
 config_string = ""
 for k, v in config.items():
     k_ = "".join(map(lambda s: s[0], k.split("_")))
@@ -110,11 +109,11 @@ num_hidden_layers = config["num_hidden_layers"]
 head_dim = config["head_dim"]
 num_heads = config["num_heads"]
 hidden_size = config["hidden_size"]
-attn_layer_idxs = config["attn_layer_idxs"]
+attn_layer_idxs = [] # config["attn_layer_idxs"]
 attn_params = {
-    "embed_dim": config["attn_embed_dim"],
-    "num_heads": config["attn_num_heads"],
-    "casual": True
+    # "embed_dim": config["attn_embed_dim"],
+    # "num_heads": config["attn_num_heads"],
+    # "casual": True
 }
 # get time string
 timestr = time.strftime("%Y%m%d-%H%M%S")
@@ -133,7 +132,7 @@ wandb_run_name = "mamba2attention"  # 'run' + str(time.time())
 
 # data
 gradient_accumulation_steps = 5 * 8  # used to simulate larger batch sizes
-batch_size = 16  # if gradient_accumulation_steps > 1, this is the micro-batch size
+batch_size = 4  # if gradient_accumulation_steps > 1, this is the micro-batch size
 chunk_size = 256
 
 # model

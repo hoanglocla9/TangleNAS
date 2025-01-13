@@ -512,7 +512,7 @@ class MHA(nn.Module):
                     # Instead F.pad will pad with zeros if seqlen < self.d_conv, and truncate otherwise.
                     qkv_t = rearrange(qkv, "b l d -> b d l")
                     conv_state.copy_(F.pad(qkv_t, (self.d_conv - qkv_t.shape[-1], 0)))  # Update state (B D W)
-            else:
+            else:   
                 conv_state = cache_params.conv_states[self.layer_idx]
                 assert qkv.shape[1] == 1, "Only support decoding with 1 token at a time for now"
                 qkv = qkv.squeeze(1)
@@ -524,6 +524,8 @@ class MHA(nn.Module):
 
                 if bias_mix is not None:
                     qkv = qkv + bias_mix
+
+                
                 # else:
                 #     qkv = causal_conv1d_update(
                 #         qkv,
