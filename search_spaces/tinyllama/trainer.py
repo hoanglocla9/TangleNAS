@@ -233,7 +233,6 @@ class SupernetTrainer(Trainer):
         self._created_lr_scheduler_q = False
         self.optimizer_q, self.lr_scheduler_q = None, None
         self.architect = ArchitectV1(model=self.model)
-        self.model_ema = ModelEma(model, decay=ema_decay)
 
         # Override self.model.generation_config if a GenerationConfig is specified in args.
         # Priority: args.generation_config > model.generation_config > default GenerationConfig.
@@ -804,10 +803,10 @@ class SupernetTrainer(Trainer):
                 with ctx:
                     output = self.model(**batch_sample_weights)
                     weights_loss = output.loss
-                    QE_loss, distribution_loss = self.model.auxiliary_quantized_loss(quantization_error_minimization=True)
-                    QE_loss_weight = annealing_schedule(num_updates)
+                    # QE_loss, distribution_loss = self.model.auxiliary_quantized_loss(quantization_error_minimization=True)
+                    # QE_loss_weight = annealing_schedule(num_updates)
 
-                    overall_loss = weights_loss + QE_loss * QE_loss_weight + distribution_loss
+                    overall_loss = weights_loss #+ QE_loss * QE_loss_weight + distribution_loss
                     overall_loss = (
                         overall_loss / args.gradient_accumulation_steps
                     )  # scale the loss to account for gradient accumulation
@@ -830,17 +829,17 @@ class SupernetTrainer(Trainer):
                 #         if pn.endswith('a_scale') or pn.endswith('w_scale'):
                 #             print(pn, p.grad.view(-1))
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.model.get_model_parameters(), args.max_grad_norm)
-                grad_norm_q = torch.nn.utils.clip_grad_norm_(self.model.get_quantization_parameters(), args.max_grad_norm)
+                # grad_norm_q = torch.nn.utils.clip_grad_norm_(self.model.get_quantization_parameters(), args.max_grad_norm)
                 
                 # grad_norm_q = torch.nn.utils.clip_grad_norm_(self.model.get_quantization_parameters(), args.max_grad_norm)
                 # grad_norm_q = torch.nn.utils.clip_grad_norm_(self.model.get_quantization_parameters(), args.max_grad_norm)
             # self.scaler.step()
             self.optimizer.step()
-            self.optimizer_q.step()
+            # self.optimizer_q.step()
             # self.scaler.step(self.optimizer_q)
             # self.scaler.update()
             self.optimizer.zero_grad(set_to_none=True)
-            self.optimizer_q.zero_grad(set_to_none=True)
+            # self.optimizer_q.zero_grad(set_to_none=True)
             self.architect.optimizer.zero_grad(set_to_none=True)
             num_updates += 1
             t1 = time.time()
@@ -849,10 +848,13 @@ class SupernetTrainer(Trainer):
             # get loss as float. note: this is a CPU-GPU sync point
             # scale up to undo the division above, approximating the true total loss (exact would have been a sum)
             weights_lossf = weights_loss.item() * args.gradient_accumulation_steps
-            QE_lossf = QE_loss.item() * args.gradient_accumulation_steps
+            # QE_lossf = QE_loss.item() * args.gradient_accumulation_steps
             overall_lossf = overall_loss.item() * args.gradient_accumulation_steps
+            # print(
+            #     f"iter {iter_num}: loss {weights_lossf:.4f}, QE loss {QE_lossf:.4f}, Overall loss {overall_lossf:.4f}, grad_norm {grad_norm:.2f}, grad_norm_q {grad_norm_q:.2f} "
+            # )
             print(
-                f"iter {iter_num}: loss {weights_lossf:.4f}, QE loss {QE_lossf:.4f}, Overall loss {overall_lossf:.4f}, grad_norm {grad_norm:.2f}, grad_norm_q {grad_norm_q:.2f} "
+                f"iter {iter_num}: loss {weights_lossf:.4f}, grad_norm {grad_norm:.2f}"
             )
             
                 # for k in self.model.arch_parameter_dict.keys():
@@ -870,7 +872,7 @@ class SupernetTrainer(Trainer):
             # termination conditions
             if iter_num > args.max_steps:
                 break
-            if math.isnan(grad_norm) or math.isnan(grad_norm_q):
+            if math.isnan(grad_norm) : # or math.isnan(grad_norm_q)
                 break
         metrics = {}
         metrics["total_flos"] = self.current_flos

@@ -116,7 +116,7 @@ class CustomTrainingArguments(SupernetTrainngArguments):
     weight_decay: float = field(default=0.1, metadata={"help": 'The L2 weight decay rate of AdamW'})
     adam_beta1: float = field(default=0.9, metadata={"help": 'Beta 1 of AdamW'})
     adam_beta2: float = field(default=0.95, metadata={"help": 'Beta 2 of AdamW'})
-    learning_rate: float = field(default=5e-5, metadata={"help": 'The learnign rate'})
+    learning_rate: float = field(default=5e-6, metadata={"help": 'The learnign rate'})
     remove_unused_columns: bool = field(default=False, metadata={"help": 'Removed unused columns. Needed to make this codebase work.'})
     max_grad_norm: float = field(default=1.0, metadata={"help": 'Gradient clipping max norm. This is tuned and works well for all models tested.'})
     gradient_checkpointing: bool = field(default=True, metadata={"help": 'Use gradient checkpointing. You want to use this.'})
@@ -128,7 +128,7 @@ class CustomTrainingArguments(SupernetTrainngArguments):
     save_strategy: str = field(default='steps', metadata={"help": 'When to save checkpoints'})
     save_steps: int = field(default=250, metadata={"help": 'How often to save a model'})
     save_total_limit: int = field(default=40, metadata={"help": 'How many checkpoints to save before the oldest is overwritten'})
-    from_scratch: bool = field(default=True, metadata={"help": 'Create model without pre-trained weights or not'})
+    from_scratch: bool = field(default=False, metadata={"help": 'Create model without pre-trained weights or not'})
     lr_decay_iters: int = field(default=7499, metadata={"help": 'Iteration to decay learning rate'})
     min_lr: float = field(default=5e-5, metadata={"help": 'Min Learning Rate'})
     eval_iters: int = field(default=200, metadata={"help": 'How often to save a model'}) 
@@ -178,7 +178,7 @@ def get_accelerate_model(args, checkpoint_dir):
         device_map = {'': local_rank}
     
     config = AutoConfig.from_pretrained(args.model_name_or_path)
-    config.num_hidden_layers = [10, 12, 14]
+    config.num_hidden_layers = [12, 14, 16]
     config.hidden_size = [1536, 2048]
     config.num_heads = [32, 64]
     config.intermediate_size = [4096, 5632] # 4608, 5120, 

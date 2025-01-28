@@ -17,7 +17,8 @@ class MixedLinear_Head(nn.Module):
             self.quantizer = None
         else:
             self.quantizer = Quantizer(abit_list=a_bit_list, wbit_list=w_bit_list, scale_grad=True)
-            self.quantizer.init_weight_scale(self.weight)
+            self.quantizer.init_qparams_for_weights(org_weight=self.weight)
+            # self.quantizer.init_weight_scale(self.weight)
 
     def sample_weights_and_bias(self, input_dim):
         weight = self.linear_layer.weight[:, :input_dim]
