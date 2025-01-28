@@ -2,8 +2,9 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 from optimizers.optim_factory import get_sampler, get_mixop
+from quantizer import Quantizer
 class MixedLinear(nn.Module):
-    def __init__(self, hidden_size_list,  intermediate_size_list, linear_layer, reverse=False):
+    def __init__(self, hidden_size_list,  intermediate_size_list, a_bit_list, w_bit_list, linear_layer, reverse=False):
         super().__init__()
         self.hidden_size_list = hidden_size_list
         self.intermediate_size_list = intermediate_size_list
@@ -16,6 +17,14 @@ class MixedLinear(nn.Module):
         if reverse:
             self.max_out_dim = max(self.hidden_size_list)
             self.max_in_dim = max(self.intermediate_size_list)
+
+        self.a_bit_list = a_bit_list
+        self.w_bit_list = w_bit_list
+        if self.a_bit_list is None:
+            self.quantizer = None
+        else:
+            self.quantizer = Quantizer(abit_list=a_bit_list, wbit_list=w_bit_list, scale_grad=True) 
+            self.quantizer.init_weight_scale(self.weight)
 
     def sample_weights_and_bias(self, input_dim, output_dim):
         weight = self.weight[:output_dim, :input_dim]
@@ -30,48 +39,80 @@ class MixedLinear(nn.Module):
         if use_argmax:
             weights_max = torch.argmax(torch.tensor(weights), dim=-1)
             #print("weights_max", weights_max)
-            hidden_size_argmax_id = torch.div(weights_max, len(self.intermediate_size_list), rounding_mode='floor')
-            intermediate_size_argmax_id = weights_max%len(self.hidden_size_list)
-            #print("Selected emb", self.embed_dim_list[embed_dim_argmax_id])
-            #print("Selected mlp", self.mlp_ratio_list[mlp_ratio_argmax_id])
-            if self.reverse:
-                weight, bias = self.sample_weights_and_bias(
-                    self.intermediate_size_list[intermediate_size_argmax_id], self.hidden_size_list[hidden_size_argmax_id])
+            if self.quantizer is not None:
+                hidden_size_argmax_id = torch.div(weights_max, len(self.intermediate_size_list) * len(self.a_bit_list) * len(self.w_bit_list), rounding_mode='floor') ### hidden_size
+                intermediate_size_argmax_id = torch.div(weights_max%(len(self.intermediate_size_list) * len(self.a_bit_list) * len(self.w_bit_list)), len(self.a_bit_list) * len(self.w_bit_list), rounding_mode='floor')
+                a_bit_argmax_id =  torch.div(weights_max%(len(self.a_bit_list) * len(self.w_bit_list)),  len(self.w_bit_list), rounding_mode='floor')
+                w_bit_argmax_id =  weights_max%len(self.w_bit_list)
+                if self.reverse:
+                    weight, bias = self.sample_weights_and_bias(
+                        self.intermediate_size_list[intermediate_size_argmax_id], self.hidden_size_list[hidden_size_argmax_id])
+                else:
+                    weight, bias = self.sample_weights_and_bias(
+                        self.hidden_size_list[hidden_size_argmax_id], self.intermediate_size_list[intermediate_size_argmax_id])
+                    
+                given_a_bit = self.a_bit_list[a_bit_argmax_id]
+                given_w_bit = self.w_bit_list[w_bit_argmax_id]
+                q_x, q_weight = self.quantizer.forward(x, weight, given_a_bit, given_w_bit)
             else:
-                weight, bias = self.sample_weights_and_bias(
-                    self.hidden_size_list[hidden_size_argmax_id], self.intermediate_size_list[intermediate_size_argmax_id])
-            weight = weights[weights_max]*weight
+                hidden_size_argmax_id = torch.div(weights_max, len(self.intermediate_size_list), rounding_mode='floor') ### hidden_size
+                intermediate_size_argmax_id = weights_max%(len(self.intermediate_size_list))
+                if self.reverse:
+                    weight, bias = self.sample_weights_and_bias(
+                        self.intermediate_size_list[intermediate_size_argmax_id], self.hidden_size_list[hidden_size_argmax_id])
+                else:
+                    weight, bias = self.sample_weights_and_bias(
+                        self.hidden_size_list[hidden_size_argmax_id], self.intermediate_size_list[intermediate_size_argmax_id])
+                    
+                q_x = x
+                q_weight = weight
+
+            
+            
+
+            weight = weights[weights_max]*q_weight
+            x = weights[weights_max] * q_x
             if bias is not None:
                 bias = weights[weights_max]*bias
             else:
                 bias = None
+
             out = F.linear(x, weight, bias)
+
         else:
             weights_mix = 0
             bias_mix = 0
+            x_mix = 0
             k = 0
             for i in range(len(self.hidden_size_list)):
                 for j in range(len(self.intermediate_size_list)):
-                    if self.reverse:
-                        weight, bias = self.sample_weights_and_bias(
-                            self.intermediate_size_list[j], self.hidden_size_list[i])
-                    else:
-                        weight, bias = self.sample_weights_and_bias(
-                            self.hidden_size_list[i], self.intermediate_size_list[j])
-                    weight = F.pad(
-                        weight, (0, self.max_in_dim-weight.shape[-1], 0, self.max_out_dim - weight.shape[-2]), "constant", 0)
-                    if bias is not None:
-                        bias = F.pad(bias, (0, self.max_out_dim -
-                             bias.shape[-1]), "constant", 0)
-                    weights_mix += weights[k]*weight
-                    
-                    if bias is not None:
-                        bias_mix += weights[k]*bias
-                    else:
-                        bias_mix = None
-                    k = k+1
-            out = F.linear(x, weights_mix, bias_mix)
+                    for m in range(len(self.a_bit_list)):
+                        for n in range(len(self.w_bit_list)):
+                            if self.reverse:
+                                weight, bias = self.sample_weights_and_bias(
+                                    self.intermediate_size_list[j], self.hidden_size_list[i])
+                            else:
+                                weight, bias = self.sample_weights_and_bias(
+                                    self.hidden_size_list[i], self.intermediate_size_list[j])
+                            weight = F.pad(
+                                weight, (0, self.max_in_dim-weight.shape[-1], 0, self.max_out_dim - weight.shape[-2]), "constant", 0)
+                            if bias is not None:
+                                bias = F.pad(bias, (0, self.max_out_dim -
+                                    bias.shape[-1]), "constant", 0)
+                            
+                            q_x, q_weight = self.quantizer(x, weight, self.a_bit_list[m], self.w_bit_list[n])
 
+                            weights_mix += weights[k]*q_weight
+                            x_mix += weights[k] * q_x
+                            
+                            if bias is not None:
+                                bias_mix += weights[k]*bias
+                            else:
+                                bias_mix = None
+                            k = k+1
+
+            out = F.linear(x_mix, weights_mix, bias_mix)
+            del x_mix, weights_mix, bias_mix
         return out
     
 # test mixed linear

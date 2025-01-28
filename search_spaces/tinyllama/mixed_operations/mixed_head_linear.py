@@ -2,14 +2,22 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 from optimizers.optim_factory import get_sampler, get_mixop
+from quantizer import Quantizer
 
 class MixedLinear_Head(nn.Module):
-    def __init__(self, hidden_size_list, vocab_size, linear_layer):
+    def __init__(self, hidden_size_list, vocab_size,  linear_layer,a_bit_list=None, w_bit_list=None):
         super().__init__()
         self.hidden_size_list = hidden_size_list
         self.max_in_dim = max(self.hidden_size_list)
         self.max_out_dim = vocab_size
         self.linear_layer = linear_layer
+        self.a_bit_list = a_bit_list
+        self.w_bit_list = w_bit_list
+        if a_bit_list is None or w_bit_list is None:
+            self.quantizer = None
+        else:
+            self.quantizer = Quantizer(abit_list=a_bit_list, wbit_list=w_bit_list, scale_grad=True)
+            self.quantizer.init_weight_scale(self.weight)
 
     def sample_weights_and_bias(self, input_dim):
         weight = self.linear_layer.weight[:, :input_dim]
@@ -23,10 +31,26 @@ class MixedLinear_Head(nn.Module):
         #print("linear layer weight", self.linear_layer.weight.shape)
         if use_argmax:
             weights_max = torch.argmax(torch.tensor(weights), dim=-1)
-            weight, bias = self.sample_weights_and_bias(
-                    self.hidden_size_list[weights_max])
             
-            weight = weights[weights_max]*weight
+            
+            if self.quantizer is not None:
+                hidden_size_argmax_id = torch.div(weights_max, len(self.a_bit_list) * len(self.w_bit_list), rounding_mode='floor') ### hidden_size
+            
+                weight, bias = self.sample_weights_and_bias(
+                        self.hidden_size_list[hidden_size_argmax_id])
+                a_bit_argmax_id =  torch.div(weights_max%(len(self.a_bit_list) * len(self.w_bit_list)),  len(self.w_bit_list), rounding_mode='floor')
+                w_bit_argmax_id =  weights_max%len(self.w_bit_list)
+                q_x, q_weight = self.quantizer(x, weight, self.a_bit_list[a_bit_argmax_id], self.w_bit_list[w_bit_argmax_id])
+            else:
+                hidden_size_argmax_id = weights_max
+                weight, bias = self.sample_weights_and_bias(self.hidden_size_list[hidden_size_argmax_id])
+
+                q_x = x
+                q_weight = weight
+
+            weight = weights[weights_max]*q_weight
+            x = weight[weights_max] * q_x
+
             if bias is not None:
                 bias = weights[weights_max]*bias
             else:
@@ -36,21 +60,50 @@ class MixedLinear_Head(nn.Module):
         else:
             weights_mix = 0
             bias_mix = 0
+            x_mix = 0
+            k=0
             for i in range(len(self.hidden_size_list)):
-                weight, bias = self.sample_weights_and_bias(
-                        self.hidden_size_list[i])
-                weight = F.pad(
-                    weight, (0, self.max_in_dim-weight.shape[-1], 0, self.max_out_dim - weight.shape[-2]), "constant", 0)
-                if bias is not None:
-                    bias = F.pad(bias, (0, self.max_out_dim -
-                             bias.shape[-1]), "constant", 0)
-                weights_mix += weights[i]*weight
-                    
-                if bias is not None:
-                    bias_mix += weights[i]*bias
+                if self.quantizer is not None:
+                    for m in range(len(self.a_bit_list)):
+                        for n in range(len(self.w_bit_list)):
+                            weight, bias = self.sample_weights_and_bias(
+                                    self.hidden_size_list[i])
+                            weight = F.pad(
+                                weight, (0, self.max_in_dim-weight.shape[-1], 0, self.max_out_dim - weight.shape[-2]), "constant", 0)
+                            if bias is not None:
+                                bias = F.pad(bias, (0, self.max_out_dim -
+                                        bias.shape[-1]), "constant", 0)
+                                
+                            q_x, q_weight = self.quantizer(x, weight, self.a_bit_list[m], self.w_bit_list[n])
+
+                            weights_mix += weights[k]*q_weight
+                            x_mix += weights[k] * q_x
+                            
+                            if bias is not None:
+                                bias_mix += weights[k]*bias
+                            else:
+                                bias_mix = None
+                            k += 1
                 else:
-                    bias_mix = None
-            out = F.linear(x, weights_mix, bias_mix)
+                    weight, bias = self.sample_weights_and_bias(
+                        self.hidden_size_list[i])
+                    weight = F.pad(
+                        weight, (0, self.max_in_dim-weight.shape[-1], 0, self.max_out_dim - weight.shape[-2]), "constant", 0)
+                    if bias is not None:
+                        bias = F.pad(bias, (0, self.max_out_dim -
+                                        bias.shape[-1]), "constant", 0)
+                                
+                    weights_mix += weights[k]*weight
+                    x_mix = x
+                            
+                    if bias is not None:
+                        bias_mix += weights[k]*bias
+                    else:
+                        bias_mix = None
+                    k += 1
+                    
+            out = F.linear(x_mix, weights_mix, bias_mix)
+            del x_mix, weights_mix, bias_mix
 
         return out
     

@@ -109,27 +109,30 @@ class CustomTrainingArguments(SupernetTrainngArguments):
     use_apex: bool = field(default=True, metadata={"help": "use APEX or not"})
     output_dir: str = field(default='./output', metadata={"help": 'The output dir for logs and checkpoints'})
     optim: str = field(default='adamw_torch', metadata={"help": 'The optimizer to be used'})
-    per_device_train_batch_size: int = field(default=16, metadata={"help": 'The training batch size per GPU. Increase for better speed.'})
+    per_device_train_batch_size: int = field(default=4, metadata={"help": 'The training batch size per GPU. Increase for better speed.'})
     fp16: bool = field(default=True, metadata={"help": "FP16 training or not"})
     gradient_accumulation_steps: int = field(default=1, metadata={"help": 'How many gradients to accumulate before to perform an optimizer step'})
     max_steps: int = field(default=10000, metadata={"help": 'How many optimizer update steps to take'})
     weight_decay: float = field(default=0.1, metadata={"help": 'The L2 weight decay rate of AdamW'})
     adam_beta1: float = field(default=0.9, metadata={"help": 'Beta 1 of AdamW'})
     adam_beta2: float = field(default=0.95, metadata={"help": 'Beta 2 of AdamW'})
-    learning_rate: float = field(default=6e-4, metadata={"help": 'The learnign rate'})
+    learning_rate: float = field(default=5e-5, metadata={"help": 'The learnign rate'})
     remove_unused_columns: bool = field(default=False, metadata={"help": 'Removed unused columns. Needed to make this codebase work.'})
-    max_grad_norm: float = field(default=0.3, metadata={"help": 'Gradient clipping max norm. This is tuned and works well for all models tested.'})
+    max_grad_norm: float = field(default=1.0, metadata={"help": 'Gradient clipping max norm. This is tuned and works well for all models tested.'})
     gradient_checkpointing: bool = field(default=True, metadata={"help": 'Use gradient checkpointing. You want to use this.'})
     do_train: bool = field(default=True, metadata={"help": 'To train or not to train, that is the question?'})
     lr_scheduler_type: str = field(default='cosine', metadata={"help": 'Learning rate schedule. Constant a bit better than cosine, and has advantage for analysis'})
     warmup_ratio: float = field(default=0.03, metadata={"help": 'Fraction of steps to do a warmup for'})
-    logging_steps: int = field(default=10, metadata={"help": 'The frequency of update steps after which to log the loss'})
+    logging_steps: int = field(default=200, metadata={"help": 'The frequency of update steps after which to log the loss'})
     group_by_length: bool = field(default=True, metadata={"help": 'Group sequences into batches with same length. Saves memory and speeds up training considerably.'})
     save_strategy: str = field(default='steps', metadata={"help": 'When to save checkpoints'})
     save_steps: int = field(default=250, metadata={"help": 'How often to save a model'})
     save_total_limit: int = field(default=40, metadata={"help": 'How many checkpoints to save before the oldest is overwritten'})
     from_scratch: bool = field(default=True, metadata={"help": 'Create model without pre-trained weights or not'})
-    
+    lr_decay_iters: int = field(default=7499, metadata={"help": 'Iteration to decay learning rate'})
+    min_lr: float = field(default=5e-5, metadata={"help": 'Min Learning Rate'})
+    eval_iters: int = field(default=200, metadata={"help": 'How often to save a model'}) 
+
 @dataclass
 class GenerationArguments:
     # For more hyperparameters check:
@@ -175,10 +178,12 @@ def get_accelerate_model(args, checkpoint_dir):
         device_map = {'': local_rank}
     
     config = AutoConfig.from_pretrained(args.model_name_or_path)
-    config.num_hidden_layers = [18, 20, 22]
+    config.num_hidden_layers = [10, 12, 14]
     config.hidden_size = [1536, 2048]
     config.num_heads = [32, 64]
-    config.intermediate_size = [4096, 4608, 5120, 5632]
+    config.intermediate_size = [4096, 5632] # 4608, 5120, 
+    config.a_bit_list = [8, 16]  #
+    config.w_bit_list = [4, 8, 16]  #4, # 
     config.mixop = 'gdas'
     model = FlexibleLlamaForCausualLM._from_config(config) 
     

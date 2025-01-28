@@ -24,6 +24,7 @@ import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
 from torch import nn
+from quantizer import Quantizer
 
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
@@ -61,15 +62,19 @@ import itertools
 
 logger = logging.get_logger(__name__)
 
-_CHECKPOINT_FOR_DOC = "meta-llama/Llama-2-7b-hf"
-_CONFIG_FOR_DOC = "LlamaConfig"
 
 def get_entangle_ops(op, choices, op_name):
     return [EntangledOp(None, op_name) for _ in range(len(choices)-1)] + [EntangledOp(op, op_name)]
 
-def get_entangle_ops_combi(op, choices1, choices2, op_name):
+def get_entangle_ops_combi(op, choices1, choices2, choices3=None, choices4=None, op_name=''):
     choices = list(itertools.product(choices1, choices2))
+    if choices3 is not None:
+        choices = list(itertools.product(choices, choices3))
+    if choices4 is not None:
+        choices = list(itertools.product(choices, choices4))
+
     return [EntangledOp(None, op_name) for _ in range(len(choices)-1)] + [EntangledOp(op, op_name)]
+
 
 class LlamaRMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
@@ -142,28 +147,37 @@ class LlamaMLP(nn.Module):
         self.mixop = mixop
         self.layer_idx = layer_idx
 
+        self.a_bit_list = config.a_bit_list
+        self.w_bit_list = config.w_bit_list
+
         self.hidden_size_list = config.hidden_size
         self.intermediate_size_list = config.intermediate_size
 
         gate_proj = nn.Linear(max(self.hidden_size_list), max(self.intermediate_size_list), bias=config.mlp_bias)
-        self.gate_proj_op = MixedLinear(self.hidden_size_list,  self.intermediate_size_list, gate_proj, False)
-        self.gate_proj_op_list = get_entangle_ops_combi(self.gate_proj_op, self.hidden_size_list, self.intermediate_size_list, "gate_proj")
+        self.gate_proj_op = MixedLinear(self.hidden_size_list,  self.intermediate_size_list, self.a_bit_list, self.w_bit_list, gate_proj, False)
+        self.gate_proj_op_list = get_entangle_ops_combi(self.gate_proj_op, self.hidden_size_list, self.intermediate_size_list, self.a_bit_list, self.w_bit_list, "gate_proj")
 
         up_proj = nn.Linear(max(self.hidden_size_list), max(self.intermediate_size_list), bias=config.mlp_bias)
-        self.up_proj_op = MixedLinear(self.hidden_size_list,  self.intermediate_size_list, up_proj, False)
-        self.up_proj_op_list = get_entangle_ops_combi(self.up_proj_op, self.hidden_size_list, self.intermediate_size_list, "gate_proj")
+        self.up_proj_op = MixedLinear(self.hidden_size_list,  self.intermediate_size_list, self.a_bit_list, self.w_bit_list, up_proj, False)
+        self.up_proj_op_list = get_entangle_ops_combi(self.up_proj_op, self.hidden_size_list, self.intermediate_size_list, self.a_bit_list, self.w_bit_list,  "gate_proj")
 
         down_proj = nn.Linear(max(self.intermediate_size_list), max(self.hidden_size_list), bias=config.mlp_bias)
-        self.down_proj_op = MixedLinear(self.hidden_size_list,  self.intermediate_size_list, down_proj, True)
-        self.down_proj_op_list = get_entangle_ops_combi(self.down_proj_op, self.intermediate_size_list, self.hidden_size_list, "down_proj")
+        self.down_proj_op = MixedLinear(self.hidden_size_list,  self.intermediate_size_list, self.a_bit_list, self.w_bit_list, down_proj, True)
+        self.down_proj_op_list = get_entangle_ops_combi(self.down_proj_op, self.intermediate_size_list, self.hidden_size_list, self.a_bit_list, self.w_bit_list, "down_proj")
 
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x, arch_params):
-        x_up = self.mixop.forward(x, [arch_params["hidden_size"], arch_params['intermediate_size'][self.layer_idx]], self.up_proj_op_list, combi=True)
-        x_gate = self.act_fn(self.mixop.forward(x, [arch_params["hidden_size"], arch_params['intermediate_size'][self.layer_idx]], self.gate_proj_op_list, combi=True))
+        x_up = self.mixop.forward(x, 
+                        [arch_params["hidden_size"], arch_params['intermediate_size'][self.layer_idx], arch_params['a_bit'][self.layer_idx], arch_params['w_bit'][self.layer_idx]], #
+                        self.up_proj_op_list, combi=True)
+        x_gate = self.act_fn(self.mixop.forward(x, 
+                        [arch_params["hidden_size"], arch_params['intermediate_size'][self.layer_idx], arch_params['a_bit'][self.layer_idx], arch_params['w_bit'][self.layer_idx]], #
+                        self.gate_proj_op_list, combi=True))
         x_gate_up = x_gate * x_up 
-        x = self.mixop.forward(x_gate_up, [arch_params["hidden_size"], arch_params['intermediate_size'][self.layer_idx]], self.down_proj_op_list, combi=True)
+        x = self.mixop.forward(x_gate_up, 
+                        [arch_params["hidden_size"], arch_params['intermediate_size'][self.layer_idx], arch_params['a_bit'][self.layer_idx], arch_params['w_bit'][self.layer_idx]], #
+                        self.down_proj_op_list, combi=True)
         return x
 
 
@@ -193,29 +207,31 @@ class LlamaAttention(nn.Module):
         self.rope_theta = config.rope_theta
         self.is_causal = True
         self.mixop = mixop 
+        self.a_bit_list = config.a_bit_list
+        self.w_bit_list = config.w_bit_list
 
         q_proj = nn.Linear(max(self.hidden_size_list), min(self.num_heads_list) * self.max_head_dim, bias=config.attention_bias)
-        self.q_proj_op = MixedLinear_QO(self.hidden_size_list, self.num_heads_list, q_proj)
-        self.q_proj_op_list = get_entangle_ops_combi(self.q_proj_op, self.hidden_size_list, self.num_heads_list, "q_proj")
+        self.q_proj_op = MixedLinear_QO(self.hidden_size_list, self.num_heads_list, self.a_bit_list, self.w_bit_list, q_proj)
+        self.q_proj_op_list = get_entangle_ops_combi(self.q_proj_op, self.hidden_size_list, self.num_heads_list, self.a_bit_list, self.w_bit_list, "q_proj")
 
         k_proj = nn.Linear(max(self.hidden_size_list), self.num_key_value_heads * self.max_head_dim, bias=config.attention_bias)
-        self.k_proj_op = MixedLinear_KV(self.hidden_size_list, self.num_heads_list, self.num_key_value_heads, k_proj)
-        self.k_proj_op_list = get_entangle_ops_combi(self.k_proj_op, self.hidden_size_list, self.num_heads_list, "k_proj")
+        self.k_proj_op = MixedLinear_KV(self.hidden_size_list, self.num_heads_list, self.num_key_value_heads, self.a_bit_list, self.w_bit_list, k_proj)
+        self.k_proj_op_list = get_entangle_ops_combi(self.k_proj_op, self.hidden_size_list, self.num_heads_list, self.a_bit_list, self.w_bit_list, "k_proj")
 
         v_proj = nn.Linear(max(self.hidden_size_list), self.num_key_value_heads * self.max_head_dim, bias=config.attention_bias)
-        self.v_proj_op = MixedLinear_KV(self.hidden_size_list, self.num_heads_list, self.num_key_value_heads, v_proj)
-        self.v_proj_op_list = get_entangle_ops_combi(self.v_proj_op, self.hidden_size_list, self.num_heads_list, "v_proj")
+        self.v_proj_op = MixedLinear_KV(self.hidden_size_list, self.num_heads_list, self.num_key_value_heads, self.a_bit_list, self.w_bit_list, v_proj)
+        self.v_proj_op_list = get_entangle_ops_combi(self.v_proj_op, self.hidden_size_list, self.num_heads_list, self.a_bit_list, self.w_bit_list, "v_proj")
 
         o_proj = nn.Linear(min(self.num_heads_list) * self.max_head_dim, max(self.hidden_size_list), bias=config.attention_bias)
-        self.o_proj_op = MixedLinear_QO(self.hidden_size_list, self.num_heads_list, o_proj, reverse=True)
-        self.o_proj_op_list = get_entangle_ops_combi(self.o_proj_op, self.hidden_size_list, self.num_heads_list, "o_proj")
+        self.o_proj_op = MixedLinear_QO(self.hidden_size_list, self.num_heads_list, self.a_bit_list, self.w_bit_list, o_proj, reverse=True)
+        self.o_proj_op_list = get_entangle_ops_combi(self.o_proj_op, self.hidden_size_list, self.num_heads_list, self.a_bit_list, self.w_bit_list, "o_proj")
         self.rotary_emb = LlamaRotaryEmbedding(config=self.config)
 
         self.attn_dropout = nn.Dropout(self.attention_dropout) ## check
         self.attention_op = MixedAttnHeadEmbed(self.num_heads_list, self.hidden_size_list, self.num_key_value_heads, 
                                                 self.attention_dropout, self.attn_dropout, self.rotary_emb, 
                                                 self.flash, self.attention_bias)
-        self.attention_op_list = get_entangle_ops_combi(self.attention_op, self.num_heads_list, self.hidden_size_list, "attention_op")
+        self.attention_op_list = get_entangle_ops_combi(self.attention_op, self.num_heads_list, self.hidden_size_list, op_name="attention_op")
 
     def forward(
         self,
@@ -228,14 +244,23 @@ class LlamaAttention(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
-        q = self.mixop.forward(hidden_states, [arch_params["hidden_size"], arch_params['num_heads'][self.layer_idx]], self.q_proj_op_list, combi=True)
-        k = self.mixop.forward(hidden_states, [arch_params["hidden_size"], arch_params['num_heads'][self.layer_idx]], self.k_proj_op_list, combi=True)
-        v = self.mixop.forward(hidden_states, [arch_params["hidden_size"], arch_params['num_heads'][self.layer_idx]], self.v_proj_op_list, combi=True)
+        q = self.mixop.forward(hidden_states, 
+                               [arch_params["hidden_size"], arch_params['num_heads'][self.layer_idx], arch_params['a_bit'][self.layer_idx], arch_params['w_bit'][self.layer_idx]], #
+                                self.q_proj_op_list, combi=True)
+        k = self.mixop.forward(hidden_states, 
+                               [arch_params["hidden_size"], arch_params['num_heads'][self.layer_idx], arch_params['a_bit'][self.layer_idx], arch_params['w_bit'][self.layer_idx]],  # 
+                               self.k_proj_op_list, combi=True)
+        v = self.mixop.forward(hidden_states, 
+                               [arch_params["hidden_size"], arch_params['num_heads'][self.layer_idx], arch_params['a_bit'][self.layer_idx], arch_params['w_bit'][self.layer_idx]],  #
+                               self.v_proj_op_list, combi=True)
+
 
         x = q, k, v, position_ids, position_embeddings, attention_mask
         
         attn_output = self.mixop.forward(x, [arch_params["hidden_size"], arch_params['num_heads'][self.layer_idx]], self.attention_op_list, combi=True)
-        attn_output = self.mixop.forward(attn_output, [arch_params["hidden_size"], arch_params['num_heads'][self.layer_idx]], self.o_proj_op_list, combi=True) 
+        attn_output = self.mixop.forward(attn_output, 
+                            [arch_params["hidden_size"], arch_params['num_heads'][self.layer_idx], arch_params['a_bit'][self.layer_idx], arch_params['w_bit'][self.layer_idx]], #
+                            self.o_proj_op_list, combi=True) 
         
         return attn_output, None, past_key_value
 
@@ -296,6 +321,7 @@ class LlamaDecoderLayer(nn.Module):
             position_embeddings=position_embeddings,
             arch_params=arch_params,
         )
+
         hidden_states = residual + hidden_states
 
         # Fully Connected
@@ -566,7 +592,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         self.model = LlamaModel(config, mixop=self.mixop)
         self.vocab_size = config.vocab_size
         lm_head = nn.Linear(max(self.hidden_size_list), config.vocab_size, bias=False)
-        self.lm_head_op = MixedLinear_Head(self.hidden_size_list, self.vocab_size, lm_head)
+        self.lm_head_op = MixedLinear_Head(self.hidden_size_list, self.vocab_size, linear_layer=lm_head)
         self.lm_head_op_list = get_entangle_ops(self.lm_head_op, self.hidden_size_list, "lm_head")
         # Initialize weights and apply final processing
         self.post_init()
@@ -599,8 +625,9 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         num_logits_to_keep: int = 0,
         **loss_kwargs,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-        
-        
+        if torch.isnan(self.get_arch_parameters()[-1]).any():
+            print(self.get_arch_parameters()[0])
+            exit()
         arch_parameters = self.sampler.sample_step(self.get_arch_parameters())
         arch_params_sampled_dict = self.assign_arch_parameters(arch_parameters)
         device = input_ids.device
@@ -623,6 +650,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         if labels is not None:
             loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **loss_kwargs)
 
+
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
@@ -643,7 +671,25 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
             n_params -= self.model.embed_tokens.weight.numel()
         return n_params
 
+    def get_best_config(self):
+        best_config = {}
+        best_config["num_hidden_layers"] = self.config.num_hidden_layers[torch.argmax(torch.nn.functional.softmax(self.arch_parameter_dict["num_hidden_layers"], dim=-1)).item()]
+        best_config["hidden_size"] = self.config.hidden_size[torch.argmax(torch.nn.functional.softmax(self.arch_parameter_dict["hidden_size"], dim=-1)).item()]
 
+        best_num_heads = torch.argmax(torch.nn.functional.softmax(self.arch_parameter_dict["num_heads"], dim=-1),dim=-1)
+        best_config["num_heads"] = [self.config.num_heads[best_num_heads[i]] for i in range(best_num_heads.shape[0])]
+
+        best_intermediate_size = torch.argmax(torch.nn.functional.softmax(self.arch_parameter_dict["intermediate_size"], dim=-1),dim=-1)
+        best_config["intermediate_size"] = [self.config.intermediate_size[best_intermediate_size[i]] for i in range(best_intermediate_size.shape[0])]
+
+        best_a_bit = torch.argmax(torch.nn.functional.softmax(self.arch_parameter_dict["a_bit"], dim=-1),dim=-1)
+        best_config["a_bit"] = [self.config.a_bit_list[best_a_bit[i]] for i in range(best_a_bit.shape[0])]
+
+        best_w_bit = torch.argmax(torch.nn.functional.softmax(self.arch_parameter_dict["w_bit"], dim=-1),dim=-1)
+        best_config["w_bit"] = [self.config.w_bit_list[best_w_bit[i]] for i in range(best_w_bit.shape[0])]
+
+        return best_config
+    
     def _init_arch_parameters(self):
         self.arch_parameter_dict = {}
         self.arch_num_hidden_layers = nn.Parameter(
@@ -661,6 +707,15 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         self.arch_intermediate_size = nn.Parameter(
             1e-3 * torch.randn([max(self.config.num_hidden_layers),len(self.config.intermediate_size)]))
         self.arch_parameter_dict["intermediate_size"] = self.arch_intermediate_size
+
+        if self.config.a_bit_list is not None:
+            self.arch_a_bit = nn.Parameter(
+                1e-3 * torch.randn([max(self.config.num_hidden_layers),len(self.config.a_bit_list)]))
+            self.arch_parameter_dict["a_bit"] = self.arch_a_bit
+
+            self.arch_w_bit= nn.Parameter(
+                1e-3 * torch.randn([max(self.config.num_hidden_layers),len(self.config.w_bit_list)]))
+            self.arch_parameter_dict["w_bit"] = self.arch_w_bit
         
     def assign_arch_parameters(self, arch_parameters):
         arch_params_dummy = {}
@@ -669,20 +724,32 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         return arch_params_dummy
     
     def get_arch_parameters(self):
-        return [self.arch_num_hidden_layers, self.arch_hidden_size, self.arch_num_heads, self.arch_intermediate_size]
-    
+        if self.config.a_bit_list is not None:
+            return [self.arch_num_hidden_layers, self.arch_hidden_size, self.arch_num_heads, self.arch_intermediate_size, self.arch_a_bit, self.arch_w_bit]
+        else:
+            return [self.arch_num_hidden_layers, self.arch_hidden_size, self.arch_num_heads, self.arch_intermediate_size] # , self.arch_a_bit, self.arch_w_bit
+        
     def get_model_parameters(self):
-        return list(set(self.parameters()) - set(self.get_arch_parameters()))
-
-
+        return list(set(self.parameters()) - set(self.get_arch_parameters()) - set(self.get_quantization_parameters())) #
+    
+    def get_quantization_parameters(self):
+        param_dict = {pn: p for pn, p in self.named_parameters() if "arch" not in pn}
+        quant_params = set()
+        for mn, m in self.named_modules():
+            for pn, p in m.named_parameters():
+                fpn = '%s.%s' % (mn, pn) if mn else pn
+                if pn.endswith('a_scale') or pn.endswith('w_scale'):
+                    quant_params.add(fpn)
+        return [param_dict[pn] for pn in sorted(list(quant_params))]
+    
     def verify_size(self, fixed_config_file):
         import json
         with open(fixed_config_file, "r") as f:
             fixed_config = json.load(f)
         assert fixed_config["hidden_size"] == max(self.config.hidden_size) and  \
                 fixed_config["intermediate_size"] == max(self.config.intermediate_size) and \
-                fixed_config["num_hidden_layers"] == max(self.config.num_hidden_layers) and \
                 fixed_config["num_attention_heads"] == min(self.config.num_heads)
+                # fixed_config["num_hidden_layers"] == max(self.config.num_hidden_layers) and \
 
     def is_flexible_params(self, param_name):
         flexible_params = ['lm_head', 'embed_tokens', 'norm', 'input_layernorm', 'post_attention_layernorm', 'q_proj', 'k_proj', 'v_proj', 'o_proj', 'attention',
@@ -720,9 +787,9 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
                         flexible_param_name = "lm_head_op.linear_layer.weight"
 
                     if flexible_param_name not in self.state_dict():
-                        raise 'Missing this params ' + p_n
+                        # raise 'Missing this params ' + p_n
+                        pass
                     else:
-                        print(flexible_param_name)
                         self.state_dict()[flexible_param_name].copy_(state_dict[p_n])
 
                 else:
@@ -768,7 +835,8 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         # separate out all parameters to those that will and won't experience regularizing weight decay
         decay = set()
         no_decay = set()
-        whitelist_weight_modules = (MixedLinear, MixedLinear_Head, MixedLinear_KV, MixedLinear_QO )
+        quant_params = set()
+        whitelist_weight_modules = (MixedLinear, MixedLinear_Head, MixedLinear_KV, MixedLinear_QO)
         blacklist_weight_modules = (LlamaRMSNorm, LlamaRotaryEmbedding, torch.nn.Embedding, MixedRMSNorm)
         for mn, m in self.named_modules():
             for pn, p in m.named_parameters():
@@ -786,7 +854,8 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
                 elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
                     # weights of blacklist modules will NOT be weight decayed
                     no_decay.add(fpn)
-
+                elif pn.endswith('a_scale') or pn.endswith('w_scale'):
+                    quant_params.add(fpn)
         # subtle: 'transformer.wte.weight' and 'lm_head.weight' are tied, so they
         # will appear in the no_decay and decay sets respectively after the above.
         # In addition, because named_parameters() doesn't return duplicates, it
@@ -799,11 +868,11 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         param_dict = {pn: p for pn, p in self.named_parameters() if "arch" not in pn}
         # for pn in param_dict.keys():
         #     print(pn)
-        inter_params = decay & no_decay
-        union_params = decay | no_decay
+        inter_params = decay & no_decay & quant_params
+        union_params = decay | no_decay | quant_params
         # print(union_params)
-        assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params), )
-        assert len(param_dict.keys() - union_params) == 0, "parameters %s were not separated into either decay/no_decay set!" \
+        assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay/quant_params sets!" % (str(inter_params), )
+        assert len(param_dict.keys() - union_params) == 0, "parameters %s were not separated into either decay/no_decay/quant_params set!" \
                                                     % (str(param_dict.keys() - union_params), )
 
         # create the pytorch optimizer object
@@ -819,5 +888,113 @@ class LlamaForCausalLM(LlamaPreTrainedModel, GenerationMixin):
         extra_args = dict(fused=True) if use_fused else dict()
         optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
 
-        return optimizer
+
+        q_optim_groups = [
+            {"params": [param_dict[pn] for pn in sorted(list(quant_params))], "weight_decay": 0.0},
+        ]
+        optimizer_q = torch.optim.AdamW(q_optim_groups, lr=learning_rate, **extra_args) #
+
+        return optimizer, optimizer_q
     
+    def auxiliary_quantized_loss(self, fairness_regularization=False, quantization_error_minimization=False):
+        QE_loss, distribution_loss = 0, 0
+
+        for _, module in self.named_modules():
+            if isinstance(module, (MixedLinear, MixedLinear_Head, MixedLinear_KV, MixedLinear_QO)):
+                quantizer = module.quantizer
+
+                if isinstance(quantizer, Quantizer):
+                    if module.w_bit_list is None:
+                        continue
+                    weights = module.weight
+                    QE_loss_per_layer = 0
+                    for current_wbits in module.w_bit_list:
+                        step_size = quantizer.get_wscale(current_wbits, detach=False)
+                        
+                        is_computed_clipped_weights = False
+                        if fairness_regularization: # here we only force the distribution within the highly decoupled subsets...
+                            if current_wbits == 2:
+                                lower_bound, upper_bound = quantizer.weight_bound(bits=current_wbits)
+                                clipped_weights = torch.clamp(weights, min=lower_bound, max=upper_bound)
+                                distribution_loss += 1/2 * clipped_weights.pow(2).sum() # must using SGD for weight quantization
+
+                                is_computed_clipped_weights = True
+
+                        if quantization_error_minimization:
+                            if not is_computed_clipped_weights:
+                                lower_bound, upper_bound = quantizer.weight_bound(bits=current_wbits)
+                                clipped_weights = torch.clamp(weights, min=lower_bound, max=upper_bound)
+
+                            _, q_weights = quantizer(None, weights, abits=None, wbits=current_wbits)
+                            q_weights = q_weights.detach()
+                            bit_wise_distance = 2**(current_wbits - min(module.w_bit_list))
+
+                            if bit_wise_distance != 1:
+                                step_size = step_size.detach()
+                                thd_neg_min, thd_pos_min = quantizer.compute_thd(min(module.w_bit_list))
+                                bit_wise_distance_mapping = [ele*bit_wise_distance*step_size for ele in range(thd_neg_min, thd_pos_min+1)]
+
+                                idx = q_weights == bit_wise_distance_mapping[0]
+                                for cod in bit_wise_distance_mapping[1:]:
+                                    idx |= (q_weights == cod)
+                                
+                                latent_weights = clipped_weights.detach()
+                                q_weights = torch.where(idx, q_weights, latent_weights)
+                            
+                            QE_loss_per_layer += ((clipped_weights - q_weights) ** 2).sum(0).mean()
+                    QE_loss_per_layer /= len(module.w_bit_list)
+                    QE_loss += QE_loss_per_layer
+
+        return QE_loss, distribution_loss
+    
+
+    def auxiliary_quantized_loss_v2(self, fairness_regularization=False, quantization_error_minimization=False):
+        QE_loss, distribution_loss = 0, 0
+
+        for _, module in self.named_modules():
+            if isinstance(module, (MixedLinear, MixedLinear_Head, MixedLinear_KV, MixedLinear_QO)):
+                quantizer = module.quantizer
+
+                if isinstance(quantizer, Quantizer):
+                    if module.w_bit_list is None:
+                        continue
+                    weights = module.weight
+                    QE_loss_per_layer = 0
+                    for current_wbits in module.w_bit_list:
+                        step_size = quantizer.get_wscale(current_wbits, detach=False)
+                        
+                        is_computed_clipped_weights = False
+                        if fairness_regularization: # here we only force the distribution within the highly decoupled subsets...
+                            if current_wbits == 2:
+                                lower_bound, upper_bound = quantizer.weight_bound(bits=current_wbits)
+                                clipped_weights = torch.clamp(weights, min=lower_bound, max=upper_bound)
+                                distribution_loss += 1/2 * clipped_weights.pow(2).sum() # must using SGD for weight quantization
+
+                                is_computed_clipped_weights = True
+
+                        if quantization_error_minimization:
+                            if not is_computed_clipped_weights:
+                                lower_bound, upper_bound = quantizer.weight_bound(bits=current_wbits)
+                                clipped_weights = torch.clamp(weights, min=lower_bound, max=upper_bound)
+
+                            _, q_weights = quantizer(None, weights, abits=None, wbits=current_wbits)
+                            q_weights = q_weights.detach()
+                            bit_wise_distance = 2**(current_wbits - min(module.w_bit_list))
+
+                            if bit_wise_distance != 1:
+                                step_size = step_size.detach()
+                                thd_neg_min, thd_pos_min = quantizer.compute_thd(min(module.w_bit_list))
+                                bit_wise_distance_mapping = [ele*bit_wise_distance*step_size for ele in range(thd_neg_min, thd_pos_min+1)]
+
+                                idx = q_weights == bit_wise_distance_mapping[0]
+                                for cod in bit_wise_distance_mapping[1:]:
+                                    idx |= (q_weights == cod)
+                                
+                                latent_weights = clipped_weights.detach()
+                                q_weights = torch.where(idx, q_weights, latent_weights)
+                            
+                            QE_loss_per_layer += ((clipped_weights - q_weights) ** 2).sum(0).mean()
+                    QE_loss_per_layer /= len(module.w_bit_list)
+                    QE_loss += QE_loss_per_layer
+
+        return QE_loss, distribution_loss
